@@ -1,0 +1,43 @@
+## Interface: 120005
+## Title: ApexFury
+## Version: 0.1.0
+## Author: Cobanyte
+## OptionalDeps: LibSharedMedia-3.0
+## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.0). Cast detection + private-aura-safe lifecycle tracking.
+## IconTexture: Interface\Icons\inv12_apextalent_evoker_risingfury
+## SavedVariables: APEX_FURY_CONFIG, APEX_FURY_DEBUG_LOG, APEX_FURY_UI_STATE
+
+# Embedded CobySuite Library
+Libs\CobySuite\Source\Core.lua
+Libs\CobySuite\Source\Utilities\Main.lua
+Libs\CobySuite\Source\Config\Main.lua
+Libs\CobySuite\Source\UI\Factories.lua
+Libs\CobySuite\Source\UI\FormLayout.lua
+Libs\CobySuite\Source\UI\TableHeader.lua
+Libs\CobySuite\Source\Debug\Logger.lua
+Libs\CobySuite\Source\Debug\Window.lua
+Libs\CobySuite\Source\Sound\Main.lua
+Libs\CobySuite\Source\UI\SoundBrowser.lua
+
+# Core
+Source\Core.lua
+
+# Debug
+Source\Debug\Logger.lua
+Source\Debug\Window.lua
+
+# Sound
+Source\Sound\Main.lua
+
+# Config
+Source\Config\Main.lua
+Source\Config\Window.lua
+
+# Watcher
+Source\Watcher\Main.lua
+
+# Overlay
+Source\Overlay\Main.lua
+
+# Integration
+Source\Integration\Leatrix.lua
