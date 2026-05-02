@@ -84,7 +84,6 @@ local function GetCurrentSoundEntry()
   end
   local kind, _, fallbackLabel = CobySuite.Sound.Resolve(id)
   local source = "Custom"
-  local pack
   if kind == "soundkit"    then source = "Blizzard"       end
   if kind == "fdid"        then source = "Leatrix"        end
   if kind == "lsm"         then source = "LibSharedMedia" end
@@ -93,7 +92,6 @@ local function GetCurrentSoundEntry()
     label  = ApexFury.Sound.LookupLabel(id) or fallbackLabel,
     value  = id,
     source = source,
-    pack   = pack,
     kind   = kind == "soundkit"     and "SoundKit"
            or kind == "fdid"        and "FileDataID"
            or kind == "lsm"         and "LSM"
@@ -235,6 +233,14 @@ local function BuildFrame()
     onChange     = function(v) Config.Set(Config.Options.COMBAT_ONLY, v) end,
   }
 
+  widgets.actionabilityGate = form:Checkbox{
+    label        = "Actionability gate",
+    tooltip      = "When on: if you're in a vehicle, mounted (incl. skyriding combat mounts on bosses like Dimensius P2 / Amirdrassil flying phase), possessed, stunned, feared, silenced, or otherwise unable to act, the alert defers and re-fires the moment you regain control — provided Risen Fury linger still has time. When off, the sound plays regardless of player state. Recommended for high-end optimization.",
+    optionKey    = "ACTIONABILITY_GATE",
+    initialValue = Config.Get(Config.Options.ACTIONABILITY_GATE),
+    onChange     = function(v) Config.Set(Config.Options.ACTIONABILITY_GATE, v) end,
+  }
+
   widgets.verbose = form:Checkbox{
     label        = "Verbose debug logging",
     tooltip      = "Logs every cast, empower, and lifecycle event to the debug window. Useful for diagnosis; off by default.",
@@ -264,13 +270,25 @@ local function BuildFrame()
     end,
   }
 
-  -- Spell name display + hover-for-tooltip frame, anchored relative to
-  -- the spell-id editbox so they ride along on the same row.
+  -- Spell icon + name display + hover-for-tooltip frame, anchored
+  -- relative to the spell-id editbox so they ride along on the same row.
+  -- Layout: [editbox] [icon] [name] — the hover frame spans icon+name so
+  -- the spell tooltip shows for the whole visual cluster.
   do
     local eb = widgets.spellId
+    local iconSize = U.EditBoxHeight.INPUT or 22
+
+    local iconTex = content:CreateTexture(nil, "ARTWORK")
+    iconTex:SetSize(iconSize, iconSize)
+    iconTex:SetPoint("LEFT", eb, "RIGHT", 8, 0)
+    -- Crop the default 5%-ish border that Blizzard icon textures have so
+    -- the icon sits flush in the row without a chunky black frame.
+    iconTex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    iconTex:Hide()
+
     local nameLabel = content:CreateFontString(nil, "OVERLAY", Fonts.DATA)
-    nameLabel:SetPoint("LEFT", eb, "RIGHT", 12, 0)
-    nameLabel:SetWidth(FORM_W - INPUT_X - INPUT_W - 40)
+    nameLabel:SetPoint("LEFT", iconTex, "RIGHT", 6, 0)
+    nameLabel:SetWidth(FORM_W - INPUT_X - INPUT_W - iconSize - 50)
     nameLabel:SetJustifyH("LEFT")
     nameLabel:SetWordWrap(false)
 
@@ -292,8 +310,15 @@ local function BuildFrame()
       end
       if info and type(info) == "table" and info.name then
         nameLabel:SetText("|cFFFFD200" .. info.name .. "|r")
+        if info.iconID then
+          iconTex:SetTexture(info.iconID)
+          iconTex:Show()
+        else
+          iconTex:Hide()
+        end
       else
         nameLabel:SetText("|cFFFF6644(unknown spell)|r")
+        iconTex:Hide()
       end
     end
     eb._refreshName()
@@ -567,12 +592,6 @@ end
 -- Public API
 -- ═══════════════════════════════════════════════════════
 
-function Config.OpenSettings()
-  BuildFrame()
-  RestoreState()
-  frame:Show()
-end
-
 function Config.ToggleSettings()
   BuildFrame()
   if frame:IsShown() then
@@ -580,11 +599,5 @@ function Config.ToggleSettings()
   else
     RestoreState()
     frame:Show()
-  end
-end
-
-function Config.RefreshSettings()
-  if frame and frame:IsShown() then
-    Refresh()
   end
 end

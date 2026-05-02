@@ -4,6 +4,27 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-01
+
+### Added
+
+- Talent gate. Detects class, spec, Rising Fury rank, and Animosity at login and on talent changes. Watcher events register only on Devastation Evoker with Rising Fury rank ≥1 — non-Devo characters and unspecced Devos pay zero per-event cost. Chat warns on transitions (specced/unspecced Animosity, dropped to non-Devo spec, etc.) and the overlay's new line 7 shows live gate status with reason detail.
+- Math-aware Animosity warning. Without Animosity, Dragonrage caps at 18s and the 4th Rising Fury stack tick races the buff's expiration. The gate explicitly tells the user that thresholds ≥4 cannot fire without Animosity, instead of silently suppressing.
+- Actionability gate (config-toggleable, default on). Defers the alert when the player is in a vehicle, mounted (incl. skyriding combat mounts on bosses like Dimensius P2 / Amirdrassil flying phase), possessed, or under loss-of-control (stun/fear/silence/etc.). The deferred alert re-fires the moment the player can act again, provided the Risen Fury linger phase still has time. Resolved via dedicated events (`UNIT_EXITED_VEHICLE`, `LOSS_OF_CONTROL_UPDATE`, `PLAYER_MOUNT_DISPLAY_CHANGED`) plus a 0.5s polling fallback for transitions without explicit events. Overlay line 1 shows the specific defer reason (waiting for combat / in vehicle / mounted / stunned / etc.).
+
+### Fixed
+
+- Wrong-aura tracking causing spurious alert suppressions. The whole identification path has been rebuilt around several layered strategies:
+  - **Identify Dragonrage by spellId/name during capture** instead of trusting `addedAuras[1]`. Reads each added aura's `spellId` and `name` fields directly (with `pcall` + `issecretvalue` gating) and matches against the trigger spell. Falls back to a transient-buff exclusion list (Tip the Scales, etc.) when both fields are secret values during combat. Replaces the `+50ms GetPlayerAuraBySpellID` verification path which has been observed to consistently return `nil` for Dragonrage in 12.0 (the cast spell ID 375087 apparently doesn't match the buff in that lookup's filter logic).
+  - **Don't let later UNIT_AURA events override a fallback-set `firstCapturedID`** with another fallback guess. Once we've picked DR via heuristic, only a *positive* spellId/name match can dethrone it. Without this guard, the previous code re-ran the whole identification logic on every UNIT_AURA event during the capture window — so a later 1-aura batch (50ms after the initial 2-aura batch) would pick its single non-transient member and clobber the correct early pick.
+  - **Runtime "too-short-for-DR" adaptation.** When `firstCapturedID` drops within 13s of the cast (DR base is 18s, so a drop that early is definitively not Dragonrage), treat it as a transient consumption and switch to any other surviving captured aura. The next drop event will re-evaluate the new pick, cascading naturally — eventually landing on a long-lived aura that outlives the alert window. This catches cases where `addedAuras[1]` itself was a Tip-the-Scales-or-similar buff whose `spellId` field came back secret so the static transient list couldn't help.
+  - **"Too-late-for-DR" predictive override.** When `firstCapturedID` drops more than 5s after the predictive Animosity model expects (with 0 empowers, predicted = 18s; with N empowers, predicted = 18 + Σ 5×0.75^i for i in 0..N-1), the tracked aura was probably a long-lived non-DR buff that survived the cascade. Trust the predictive end instead — set `triggerDropTime = expectedTriggerEnd`. This catches the case where Light's Potential or a similar ~30s trinket buff lands at `addedAuras[1]` and outlives the cascade window. Without it, the linger model would inflate stacks-at-drop and lingerDuration, causing deferred-then-fired alerts to play long after the trinket window has actually expired. Reproduced 2026-05-01: a no-empower DR cycle had Light's Potential tracked as DR, alert fired at +38s on combat re-entry when only 3 stacks ever existed.
+  - **Verify-on-drop fallback** walks the remaining captured auras and identifies DR by `spellId`/`name` if the first-aura was wrong, replacing the broken `GetPlayerAuraBySpellID` verification.
+  - Verbose mode now logs each aura's readable spell ID at capture time so future identification issues are diagnosable from logs alone.
+  - **Match Rising Fury, not the cast ID, for the DR active-state proxy.** Training-dummy testing revealed that the aura with `spellId=375087` (Dragonrage's cast spell ID) only applies as a brief ~3s pulse — it's the *cast effect*, not the long-lived state buff. The actual buff representing "DR is active" is Rising Fury (`spellId=1271783` and related rank variants), which lasts the full Animosity-extended duration. The capture-phase identification now matches against `DR_STATE_AURA_IDS = {1271783, 1271687, 1271796}` and the name `"Rising Fury"` rather than the cast spell ID. The cast ID 375087 is also explicitly added to `TRANSIENT_AURA_SPELL_IDS` so the non-transient fallback skips it. Without this, our positive-ID match (Strategy A) was selecting the 3s pulse, and only the cascade-too-short heuristic (Strategy B) was rescuing each cycle by accident.
+
+  Reproduced and stepwise-fixed across multiple Liberation of Undermine pulls 2026-05-01.
+
 ## [0.1.0] - 2026-04-30
 
 Initial release.
@@ -25,5 +46,6 @@ Initial release.
 
 - The CurseForge thumbnail occasionally lags an icon refresh after big patches. Not unique to this addon.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v0.1.0

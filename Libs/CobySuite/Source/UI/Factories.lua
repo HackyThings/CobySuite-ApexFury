@@ -565,6 +565,18 @@ function UI.CreateCheckbox(parent, opts)
     if opts.labelColor then
       cb.text:SetTextColor(opts.labelColor[1], opts.labelColor[2], opts.labelColor[3])
     end
+
+    -- Mouse-target overlay so the label area triggers the same tooltip
+    -- and toggles the checkbox when clicked. FontStrings can't receive
+    -- mouse events directly, so we use a transparent Frame sized to the
+    -- text. Setting frame strata above cb keeps it from being eaten by
+    -- nearby widgets, and EnableMouse routes hover/click here.
+    cb.labelHover = CreateFrame("Frame", nil, cb)
+    cb.labelHover:SetAllPoints(cb.text)
+    cb.labelHover:EnableMouse(true)
+    cb.labelHover:SetScript("OnMouseUp", function(_, button)
+      if button == "LeftButton" then cb:Click() end
+    end)
   end
 
   if opts.initialValue then cb:SetChecked(true) end
@@ -577,6 +589,9 @@ function UI.CreateCheckbox(parent, opts)
 
   if opts.tooltip then
     UI.AddTooltip(cb, opts.tooltip, opts.tooltipAnchor or "ANCHOR_RIGHT")
+    if cb.labelHover then
+      UI.AddTooltip(cb.labelHover, opts.tooltip, opts.tooltipAnchor or "ANCHOR_RIGHT")
+    end
   end
 
   cb._optionKey = opts.optionKey

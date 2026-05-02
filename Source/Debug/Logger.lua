@@ -5,7 +5,7 @@
 ApexFury.Debug = CobySuite.Debug.NewLogger({
   addonName = "ApexFury",
   categories = {
-    "INIT", "CONFIG", "WATCHER", "CAST", "CAPTURE",
+    "INIT", "CONFIG", "WATCHER", "CAST", "CAPTURE", "TALENTGATE",
   },
   savedVariable = "APEX_FURY_DEBUG_LOG",
   sessionHeader = function(lines)

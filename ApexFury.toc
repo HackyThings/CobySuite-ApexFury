@@ -1,6 +1,6 @@
 ## Interface: 120005
 ## Title: ApexFury
-## Version: 0.1.0
+## Version: 0.2.0
 ## Author: Cobanyte
 ## OptionalDeps: LibSharedMedia-3.0
 ## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.0). Cast detection + private-aura-safe lifecycle tracking.
@@ -35,6 +35,9 @@ Source\Config\Window.lua
 
 # Watcher
 Source\Watcher\Main.lua
+
+# TalentGate (must load after Watcher — calls Watcher.Activate/Deactivate)
+Source\TalentGate\Main.lua
 
 # Overlay
 Source\Overlay\Main.lua

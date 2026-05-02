@@ -3,6 +3,7 @@
   Config = {},
   Sound = {},
   Watcher = {},
+  TalentGate = {},
   Overlay = {},
   Leatrix = {},
 }
@@ -50,7 +51,22 @@ local function PrintStatus()
   local fireDelay = math.max(0, (threshold - 1) * interval)
   local minDuration = fireDelay + 0.1  -- THRESHOLD_BUFFER (mirrors Watcher)
 
+  local gate = ApexFury.TalentGate and ApexFury.TalentGate.GetState
+               and ApexFury.TalentGate.GetState() or nil
+
   Message("Status:")
+  if gate then
+    if gate.usable then
+      if gate.hasAnimosity then
+        Message("  Talent gate: |cFF00FF00ready|r |cFF888888(RF rank " ..
+          tostring(gate.risingFuryRank) .. ", Animosity on)|r")
+      else
+        Message("  Talent gate: |cFFFFAA00active, max 3 stacks|r |cFF888888(no Animosity)|r")
+      end
+    else
+      Message("  Talent gate: |cFFFF8800inactive|r — " .. (gate.detail or gate.reason or "?"))
+    end
+  end
   Message("  Enabled: " .. (enabled and "|cFF00FF00yes|r" or "|cFFFF4C4Cno|r"))
   Message("  Verbose: " .. (Config.Get(Config.Options.VERBOSE) and "|cFF00FF00on|r" or "|cFF888888off|r"))
   Message("  Trigger spell ID: |cFFFFFFFF" .. tostring(spellID) .. "|r (cast event)")
@@ -59,6 +75,7 @@ local function PrintStatus()
   Message(string.format("  → Timer fires at |cFF00FF00%.0fs|r |cFF888888(suppress unless trigger duration >= %.1fs)|r",
     fireDelay, minDuration))
   Message("  Combat-only: " .. (Config.Get(Config.Options.COMBAT_ONLY) and "|cFF00FF00yes|r (defer if not in combat)" or "|cFFFFFF00no|r (fire any time)"))
+  Message("  Actionability gate: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and "|cFF00FF00yes|r (defer in vehicle/mount/CC/possession)" or "|cFFFFFF00no|r (fire regardless of player state)"))
   Message("  Min linger remaining: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MIN_REMAINING)) .. "s|r")
   Message("  Linger model: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_PER_STACK)) .. "s/stack|r, max |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_MAX)) .. "s|r, |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MAX_STACKS)) .. "|r max stacks")
   Message("  Sound ID: |cFFFFFFFF" .. tostring(soundID) .. "|r")
@@ -158,12 +175,15 @@ startupFrame:SetScript("OnEvent", function(_, event, arg1)
     if ApexFury.Watcher.Start then
       ApexFury.Watcher.Start()
     end
+    if ApexFury.TalentGate.Start then
+      ApexFury.TalentGate.Start()
+    end
     if ApexFury.Overlay.RestoreFromSavedVar then
       ApexFury.Overlay.RestoreFromSavedVar()
     end
     if ApexFury.Leatrix.TryHook then
       ApexFury.Leatrix.TryHook()
     end
-    ApexFury.Debug.Log("INIT", "PLAYER_LOGIN — watcher started")
+    ApexFury.Debug.Log("INIT", "PLAYER_LOGIN — watcher started, talent gate armed")
   end
 end)

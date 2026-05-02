@@ -41,6 +41,7 @@ local base = CobySuite.Config.New({
     LINGER_MAX       = "linger_max",       -- maximum total linger duration (Rising Fury cap = 20)
     MAX_STACKS       = "max_stacks",       -- maximum stacks the buff can reach (Rising Fury = 5)
     COMBAT_ONLY      = "combat_only",      -- only fire alert while in combat; defer otherwise
+    ACTIONABILITY_GATE = "actionability_gate", -- defer alert while vehicled/mounted/CC'd/possessed
     MIN_REMAINING    = "min_remaining",    -- min seconds of linger remaining required to fire deferred alert
     SOUND_ID         = "sound_id",
     SOUND_LABEL      = "sound_label",      -- persisted friendly label (e.g. Leatrix path) for sounds outside our catalog
@@ -55,6 +56,7 @@ local base = CobySuite.Config.New({
     ["linger_max"]       = 20,     -- max 20s of lingering total
     ["max_stacks"]       = 5,      -- Rising Fury caps at 5 stacks
     ["combat_only"]      = true,   -- only play sound while in combat (defer pending if not)
+    ["actionability_gate"] = true, -- defer alert while in vehicle/mount/CC/possession (re-fires on recovery if linger remains)
     ["min_remaining"]    = 2,      -- need >=2s of linger remaining to fire deferred alert
     ["sound_id"]         = 8960,   -- READY_CHECK
     ["sound_label"]      = "",     -- empty = use catalog/SOUNDKIT/Leatrix lookup

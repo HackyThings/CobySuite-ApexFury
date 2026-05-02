@@ -25,9 +25,10 @@ local LINE_TOOLTIPS = {
   [4] = "Exact elapsed seconds from the Dragonrage cast to when the alert sound played (or was suppressed). Frozen at the moment of resolution.",
   [5] = "How long ago the most recent alert sound played. Useful for verifying the cadence between Dragonrages.",
   [6] = "Current verdict — what the watcher would do if the alert moment hit RIGHT NOW. Shows which gates would pass/fail (RF/Risen Fury alive, DR duration ≥ threshold requirement, linger ≥ min_remaining). Helps explain unexpected suppressions.",
+  [7] = "Talent gate — addon prerequisites. Requires Devastation Evoker spec + Rising Fury rank ≥1. Animosity needed for threshold ≥4 (unextended Dragonrage caps at 3 stacks). When inactive, the watcher unregisters its events entirely.",
 }
 
-local NUM_LINES = 6
+local NUM_LINES = 7
 
 ---------------------------------------------------------------------------
 -- Best-effort read of an aura's remaining duration. expirationTime is
@@ -86,18 +87,84 @@ end
 ---------------------------------------------------------------------------
 -- Update display — called from OnUpdate
 ---------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- Render line 7 — the talent gate status. Always shown.
+---------------------------------------------------------------------------
+local function RenderGateLine(state)
+  local reason = state.gateReason or "unknown"
+  local detail = state.gateDetail or ""
+  if reason == "ready" then
+    lines[7]:SetText(string.format(
+      "|cFFCCCCCCGate:|r |cFF00FF00ready|r |cFF555555(RF rank %d, Animosity on)|r",
+      state.gateRisingFury or 0))
+  elseif reason == "no_animosity" then
+    lines[7]:SetText(string.format(
+      "|cFFCCCCCCGate:|r |cFFFFAA00active, max 3 stacks|r |cFF555555(no Animosity)|r"))
+  elseif reason == "no_rising_fury" then
+    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF8800Rising Fury not specced|r")
+  elseif reason == "wrong_spec" then
+    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF8800wrong spec|r |cFF555555(switch to Devastation)|r")
+  elseif reason == "wrong_class" then
+    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Cwrong class|r")
+  elseif reason == "api_unavailable" then
+    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4CAPI unavailable|r |cFF555555(/reload to retry)|r")
+  else
+    lines[7]:SetText("|cFFCCCCCCGate:|r |cFF888888" .. tostring(detail) .. "|r")
+  end
+end
+
+---------------------------------------------------------------------------
+-- When the gate is closed (watcher inactive), lines 1-6 collapse to a
+-- muted placeholder. The user still sees enough to know the addon is on
+-- and why it's not doing anything.
+---------------------------------------------------------------------------
+local function RenderInactivePlaceholder(state)
+  local reason = state.gateReason or "unknown"
+  local detail = state.gateDetail or "Inactive"
+  lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF888888inactive|r")
+  lines[2]:SetText("|cFF888888" .. detail .. "|r")
+  lines[3]:SetText("|cFF888888—|r")
+  lines[4]:SetText("|cFF888888—|r")
+  lines[5]:SetText("|cFF888888—|r")
+  lines[6]:SetText("|cFF888888—|r")
+  RenderGateLine(state)
+end
+
 local function UpdateDisplay()
   if not frame or not frame:IsShown() then return end
 
   local state = ApexFury.Watcher.GetState and ApexFury.Watcher.GetState() or {}
   local now = GetTime()
 
+  -- Gate-closed path: addon prerequisites not met. Skip cycle rendering
+  -- entirely — the watcher isn't running, all the cycle fields are nil
+  -- by design.
+  if state.gateUsable == false then
+    RenderInactivePlaceholder(state)
+    return
+  end
+
   -- Line 1: our timer / state
   if state.alertPending then
     local elapsed = state.castTime and (now - state.castTime) or 0
+    local reasonText
+    local r = state.pendingDeferReason
+    if r == "ooc" then
+      reasonText = "waiting for combat"
+    elseif r == "vehicle" or r == "vehicle_ui" then
+      reasonText = "in vehicle"
+    elseif r == "mounted" then
+      reasonText = "mounted"
+    elseif r == "possessed" then
+      reasonText = "possessed"
+    elseif r == "loss_of_control" then
+      reasonText = "stunned/CC'd"
+    else
+      reasonText = "waiting"
+    end
     lines[1]:SetText(string.format(
-      "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING — waiting for combat|r |cFF555555(%.1fs since cast)|r",
-      elapsed))
+      "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING — %s|r |cFF555555(%.1fs since cast)|r",
+      reasonText, elapsed))
   elseif state.castTime and state.alertScheduledFor and not state.alertFired and not state.alertSuppressed then
     local remaining = math.max(0, state.alertScheduledFor - now)
     lines[1]:SetText(string.format(
@@ -150,7 +217,7 @@ local function UpdateDisplay()
   -- suppression offset if alert was cancelled.
   if state.lastFiredOffset then
     lines[4]:SetText(string.format(
-      "|cFFCCCCCCFired after:|r |cFF00FF00%.3fs|r |cFF555555✓|r",
+      "|cFFCCCCCCFired after:|r |cFF00FF00%.3fs|r",
       state.lastFiredOffset))
   elseif state.lastSuppressOffset then
     lines[4]:SetText(string.format(
@@ -160,7 +227,7 @@ local function UpdateDisplay()
     -- Live elapsed since cast (counting up toward scheduled fire)
     local elapsed = now - state.castTime
     lines[4]:SetText(string.format(
-      "|cFFCCCCCCFired after:|r |cFFAAAAAA%.2fs elapsed…|r", elapsed))
+      "|cFFCCCCCCFired after:|r |cFFAAAAAA%.2fs elapsed...|r", elapsed))
   else
     lines[4]:SetText("|cFFCCCCCCFired after:|r |cFF888888—|r")
   end
@@ -189,7 +256,16 @@ local function UpdateDisplay()
       "|cFFCCCCCCVerdict:|r |cFFFF8800SUPPRESSED|r |cFF555555(%s)|r",
       tostring(state.lastSuppressReason or "?")))
   elseif state.alertPending then
-    lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFFFFAA00deferred — awaiting combat re-entry|r")
+    local r = state.pendingDeferReason
+    local detail = (r == "ooc" and "awaiting combat re-entry")
+                or (r == "vehicle" and "awaiting vehicle exit")
+                or (r == "vehicle_ui" and "awaiting vehicle exit")
+                or (r == "mounted" and "awaiting dismount")
+                or (r == "possessed" and "awaiting possession end")
+                or (r == "loss_of_control" and "awaiting CC end")
+                or "awaiting recovery"
+    lines[6]:SetText(string.format(
+      "|cFFCCCCCCVerdict:|r |cFFFFAA00deferred — %s|r", detail))
   else
     local Config = ApexFury.Config
     local interval    = Config.Get(Config.Options.STACK_INTERVAL)
@@ -216,6 +292,11 @@ local function UpdateDisplay()
       lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF00FF00WOULD FIRE|r |cFF555555(all gates pass)|r")
     end
   end
+
+  -- Line 7: talent gate (always rendered when usable, since "ready" is
+  -- the common case but "no_animosity" is the user's reminder that
+  -- threshold ≥4 alerts can't fire).
+  RenderGateLine(state)
 end
 
 ---------------------------------------------------------------------------
@@ -272,7 +353,7 @@ local function BuildFrame()
     local line = f:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
     line:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -34 - (i - 1) * 22)
     line:SetJustifyH("LEFT")
-    line:SetText("…")
+    line:SetText("...")
     if LINE_TOOLTIPS[i] then
       UI.AddTooltip(line, LINE_TOOLTIPS[i], "ANCHOR_RIGHT")
     end
