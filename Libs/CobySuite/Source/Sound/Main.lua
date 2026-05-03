@@ -586,19 +586,22 @@ end
 local MAX_PLAYBACK_SECONDS = 10
 local FADEOUT_MS = 400
 
+-- Returns (handle, willPlay). willPlay is the boolean PlaySound/PlaySoundFile
+-- returns first — false means the WoW mixer rejected the dispatch (channel
+-- saturation under heavy combat is the typical cause). Callers that need
+-- to know whether audio actually went out should treat
+-- (willPlay and handle) as the success signal; handle alone can be valid
+-- even when willPlay is false in some edge cases.
 function Sound.Play(value, channel)
   channel = channel or "Master"
   local kind, payload = Sound.Resolve(value)
-  local handle
+  local willPlay, handle
   if kind == "soundkit" then
-    local _
-    _, handle = PlaySound(payload, channel)
+    willPlay, handle = PlaySound(payload, channel)
   elseif kind == "lsm" then
-    local _
-    _, handle = PlaySoundFile(payload, channel)
+    willPlay, handle = PlaySoundFile(payload, channel)
   elseif kind == "fdid" then
-    local _
-    _, handle = PlaySoundFile(payload, channel)
+    willPlay, handle = PlaySoundFile(payload, channel)
   end
 
   if handle then
@@ -606,7 +609,7 @@ function Sound.Play(value, channel)
       StopSound(handle, FADEOUT_MS)
     end)
   end
-  return handle
+  return handle, willPlay
 end
 
 -- Built lazily once: value → label map for the curated Blizzard catalog

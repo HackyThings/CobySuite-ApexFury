@@ -35,7 +35,7 @@ local FORM_W   = 480
 local PANEL_PAD = 16
 local INPUT_W  = 80
 local ROW_H    = 26
-local SEC_GAP  = 14
+local SEC_GAP  = 6
 local INPUT_X  = 220
 
 -- Browser (right pane) dimensions
@@ -135,6 +135,9 @@ local function Refresh()
         if w._refreshName then w._refreshName() end
       end
     end
+  end
+  if widgets.soundChannel then
+    widgets.soundChannel:SetValue(Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog")
   end
   RefreshSelectedDisplay()
   if browser and browser.RefreshSelection then browser:RefreshSelection() end
@@ -372,7 +375,9 @@ local function BuildFrame()
       vertexColor = { 0.7, 0.9, 1.0 },
       tooltip     = "Play the selected sound",
       onClick     = function()
-        ApexFury.Sound.Play(Config.Get(Config.Options.SOUND_ID))
+        ApexFury.Sound.Play(
+          Config.Get(Config.Options.SOUND_ID),
+          Config.Get(Config.Options.SOUND_CHANNEL))
       end,
       point       = { "LEFT", parent, "TOPLEFT", INPUT_X - 28, y },
     })
@@ -440,7 +445,44 @@ local function BuildFrame()
     end)
   end
 
-  -- Row 3: Library support tip — always shown.
+  -- Row 3: Audio channel dropdown.
+  form:Custom(function(parent, y)
+    y = y - 5
+    local label = parent:CreateFontString(nil, "OVERLAY", Fonts.DATA)
+    label:SetPoint("LEFT", parent, "TOPLEFT", PANEL_PAD, y)
+    label:SetText("Audio channel:")
+    UI.AddTooltip(label,
+      "Which WoW audio channel the alert sound plays on.\n\n"
+      .. "|cFFFFD200Dialog|r (default): nearly empty bus in combat — best isolation. "
+      .. "If you can't hear it, raise Audio > Dialog Volume in WoW settings.\n\n"
+      .. "|cFFFFD200Master|r: routes through the root mixer alongside DBM-style alerts. "
+      .. "Can be drowned out by short samples competing with combat audio.\n\n"
+      .. "|cFFFFD200SFX|r: shares the bus with all combat sound effects — most likely to be masked.",
+      "ANCHOR_RIGHT")
+
+    -- The dropdown wrapper Frame is 40 tall: an unused label at TOPLEFT 0,0
+    -- and the actual dropdown button at TOPLEFT 0,-14 (so button center is
+    -- 27 below wrapper top). Anchor wrapper top at y+27 so the button center
+    -- lands on y, matching the label's LEFT-anchor center.
+    local dd = UI.CreateDropDown(parent)
+    dd:SetPoint("TOPLEFT", parent, "TOPLEFT", INPUT_X - 6, y + 27)
+    dd.DropDown:SetSize(160, 26)
+    dd:InitAgain(
+      { "Dialog", "Master", "SFX" },
+      { "Dialog", "Master", "SFX" },
+      {
+        "Recommended. Nearly empty bus during combat — best chance of being heard. Uses your Dialog Volume slider.",
+        "Routes alongside DBM-style critical alerts. Can be masked by simultaneous combat sounds.",
+        "Shares the bus with combat sound effects — most likely to be drowned out.",
+      })
+    dd:SetValue(Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog")
+    dd.onValueChanged = function(v) Config.Set(Config.Options.SOUND_CHANNEL, v) end
+    widgets.soundChannel = dd
+
+    return y - ROW_H
+  end)
+
+  -- Row 4: Library support tip — always shown.
   form:Custom(function(parent, y)
     local libsTip = parent:CreateFontString(nil, "OVERLAY", Fonts.SMALL)
     libsTip:SetPoint("TOPLEFT",  parent, "TOPLEFT",  PANEL_PAD, y - 2)

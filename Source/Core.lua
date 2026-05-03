@@ -36,6 +36,7 @@ local function PrintHelp()
   Message("  /af scan [name] — List active player buffs (find spell IDs)")
   Message("  /af overlay — Toggle the on-screen status frame")
   Message("  /af debug — Toggle the debug log window")
+  Message("  /af channel [dialog|master|sfx] — Show or change the audio channel")
   Message("  /af reset — Restore all settings to defaults")
   Message("  /af version — Print the addon version")
   Message("  |cFF888888(All other settings live in the GUI — open with /af)|r")
@@ -79,6 +80,7 @@ local function PrintStatus()
   Message("  Min linger remaining: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MIN_REMAINING)) .. "s|r")
   Message("  Linger model: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_PER_STACK)) .. "s/stack|r, max |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_MAX)) .. "s|r, |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MAX_STACKS)) .. "|r max stacks")
   Message("  Sound ID: |cFFFFFFFF" .. tostring(soundID) .. "|r")
+  Message("  Audio channel: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog") .. "|r")
 end
 
 local function HandleSlashCommand(input)
@@ -134,6 +136,19 @@ local function HandleSlashCommand(input)
       Message(string.format("  |cFF888888(%d private aura(s) skipped)|r", hidden))
     end
 
+  elseif cmd == "channel" then
+    local arg = (rest or ""):lower():trim()
+    local CHANNEL_MAP = { dialog = "Dialog", master = "Master", sfx = "SFX" }
+    if arg == "" then
+      local cur = Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog"
+      Message(string.format("Audio channel: |cFFFFFFFF%s|r. Use |cFFFFFFFF/af channel dialog|master|sfx|r to change.", cur))
+    elseif CHANNEL_MAP[arg] then
+      Config.Set(Config.Options.SOUND_CHANNEL, CHANNEL_MAP[arg])
+      Message("Audio channel set to |cFFFFFFFF" .. CHANNEL_MAP[arg] .. "|r.")
+    else
+      Message("Unknown channel '" .. arg .. "'. Valid: |cFFFFFFFFdialog|master|sfx|r.")
+    end
+
   elseif cmd == "reset" then
     Config.Reset()
     Message("All settings restored to defaults.")
@@ -184,6 +199,17 @@ startupFrame:SetScript("OnEvent", function(_, event, arg1)
     if ApexFury.Leatrix.TryHook then
       ApexFury.Leatrix.TryHook()
     end
+
+    -- One-shot onboarding: surface the audio-channel default so users with
+    -- their Dialog volume slider muted know why alerts are silent.
+    APEX_FURY_UI_STATE = APEX_FURY_UI_STATE or {}
+    if not APEX_FURY_UI_STATE.sawChannelHint then
+      APEX_FURY_UI_STATE.sawChannelHint = true
+      Message("Alerts play on the |cFFFFD200Dialog|r audio channel for best isolation in combat. "
+        .. "If you can't hear them, raise |cFFFFFFFFAudio > Dialog Volume|r in WoW settings, "
+        .. "or run |cFFFFFFFF/af channel master|r to switch.")
+    end
+
     ApexFury.Debug.Log("INIT", "PLAYER_LOGIN — watcher started, talent gate armed")
   end
 end)

@@ -4,6 +4,17 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+### Added
+
+- **Audio channel selector.** Alerts now play on the **Dialog** audio channel by default. The Master channel — what most addons (including this one) used to play on — gets crowded in heavy combat: your spell sounds, boss telegraphs, weapon hits, DBM/BigWigs voice cues, and environmental audio all compete on the same mix bus, and a short alert sound can be technically playing yet inaudible against louder simultaneous sounds. The Dialog channel is reserved for NPC speech and cinematic dialogue, so it's nearly empty during M+ and raid pulls, giving your alert clean room to be heard. You can pick **Master**, **SFX**, or **Dialog** in the options window's Sound section, or change it on the fly with `/af channel [dialog|master|sfx]`. `/af status` now also reports the active channel. A one-time chat message on first login explains the new default, and tells you exactly what to check if you can't hear it (Audio > Dialog Volume in WoW's sound settings, or switch back to Master via the slash command).
+
+### Fixed
+
+- **Alerts now fire correctly when you have Font of Magic talented.** Font of Magic replaces Fire Breath and Eternity Surge with different spell IDs under the hood (382266 / 382411 instead of the base 357208 / 359073). ApexFury was only watching for the base IDs, so every empower you cast was invisible to the addon — every Dragonrage cycle counted zero empowers and got suppressed for "trigger too short", even though Dragonrage was running its full Animosity-extended duration. If you've ever seen "fired" on the overlay but heard nothing during M+, this was likely the cause. All four spell IDs are now tracked; you should see "Empower #1", "Empower #2", etc. in the debug log during Dragonrage.
+- **Silent alerts now retry once.** WoW's audio mixer can drop short sounds when it's overwhelmed in heavy combat — successfully dispatched, but never audibly played. Since Dragonrage's trinket window is gated by a single alert per cycle, a dropped sound means a missed window. ApexFury now retries the alert once after a brief delay (which almost always succeeds once the mixer has freed up), and writes an "alert was inaudible" line to the debug log if both attempts fail. Combined with the new Dialog-channel default, this should resolve the intermittent "I didn't hear my alert" issue.
+
 ## [0.2.0] - 2026-05-01
 
 ### Added
@@ -23,7 +34,7 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
   - Verbose mode now logs each aura's readable spell ID at capture time so future identification issues are diagnosable from logs alone.
   - **Match Rising Fury, not the cast ID, for the DR active-state proxy.** Training-dummy testing revealed that the aura with `spellId=375087` (Dragonrage's cast spell ID) only applies as a brief ~3s pulse — it's the *cast effect*, not the long-lived state buff. The actual buff representing "DR is active" is Rising Fury (`spellId=1271783` and related rank variants), which lasts the full Animosity-extended duration. The capture-phase identification now matches against `DR_STATE_AURA_IDS = {1271783, 1271687, 1271796}` and the name `"Rising Fury"` rather than the cast spell ID. The cast ID 375087 is also explicitly added to `TRANSIENT_AURA_SPELL_IDS` so the non-transient fallback skips it. Without this, our positive-ID match (Strategy A) was selecting the 3s pulse, and only the cascade-too-short heuristic (Strategy B) was rescuing each cycle by accident.
 
-  Reproduced and stepwise-fixed across multiple Liberation of Undermine pulls 2026-05-01.
+  Reproduced and stepwise-fixed across multiple real-pull cycles 2026-05-01.
 
 ## [0.1.0] - 2026-04-30
 
@@ -46,6 +57,7 @@ Initial release.
 
 - The CurseForge thumbnail occasionally lags an icon refresh after big patches. Not unique to this addon.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v0.1.0

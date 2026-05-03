@@ -82,9 +82,20 @@ local THRESHOLD_BUFFER = 0.1
 -- via UNIT_SPELLCAST_SUCCEEDED (not _EMPOWER_STOP) so Tip-the-Scales
 -- instant releases register too — TtS-instant empowers don't fire
 -- _EMPOWER_STOP with complete=true.
+--
+-- Both base AND Font-of-Magic variants must be listed. Font of Magic is a
+-- Devastation talent (spell 411212) that overrides the action-bar spell IDs
+-- via SPELL_AURA_OVERRIDE_ACTIONBAR_SPELL — the cast event then fires with
+-- the FoM variant ID (382266/382411) instead of the base (357208/359073).
+-- Missing the FoM variants caused empowerCount=0 for every cycle on FoM-
+-- talented users, suppressing every alert with "trigger duration < required"
+-- (real-pull bug report 2026-05-02). FoM is a near-default high-end talent,
+-- so this affected the addon's primary audience.
 local EMPOWER_SPELL_IDS = {
-  [357208] = "Fire Breath",
-  [359073] = "Eternity Surge",
+  [357208] = "Fire Breath",            -- base
+  [359073] = "Eternity Surge",         -- base
+  [382266] = "Fire Breath (FoM)",      -- Font of Magic variant
+  [382411] = "Eternity Surge (FoM)",   -- Font of Magic variant
 }
 
 -- Known transient buffs the engine occasionally puts at addedAuras[1]
@@ -322,7 +333,30 @@ local function FireAlert(reasonContext)
   alertFired = true
   alertPending = false
 
-  ApexFury.Sound.Play(Config.Get(Config.Options.SOUND_ID))
+  -- WoW's sound mixer can reject PlaySound/PlaySoundFile dispatches under
+  -- heavy combat (channel saturation). On failure, surface it to the log
+  -- and retry once after a short delay — by the next frame the mixer has
+  -- typically freed a slot. Without this, an alert can silently go out
+  -- while the overlay reports "fired".
+  local soundValue   = Config.Get(Config.Options.SOUND_ID)
+  local soundChannel = Config.Get(Config.Options.SOUND_CHANNEL)
+  local handle, willPlay = ApexFury.Sound.Play(soundValue, soundChannel)
+  if not (willPlay and handle) then
+    Debug.Log("WATCHER",
+      "Sound dispatch returned willPlay=%s handle=%s — retrying in 50ms (mixer likely saturated)",
+      tostring(willPlay), tostring(handle))
+    C_Timer.After(0.05, function()
+      local h2, wp2 = ApexFury.Sound.Play(soundValue, soundChannel)
+      if wp2 and h2 then
+        Debug.Log("WATCHER", "Sound retry succeeded")
+      else
+        Debug.Log("WATCHER",
+          "Sound retry also failed (willPlay=%s handle=%s) — alert was inaudible",
+          tostring(wp2), tostring(h2))
+      end
+    end)
+  end
+
   lastFiredTime = GetTime()
   if castTime then lastFiredOffset = lastFiredTime - castTime end
 
