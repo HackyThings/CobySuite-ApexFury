@@ -530,11 +530,9 @@ local function ScheduleDebouncedEval(reason)
     end
     LogVerbose("Debounced eval gen=%d firing", gen)
 
-    -- Spec changes invalidate the node cache (Animosity is on Devo tree
-    -- but loadout swaps within Devo also refresh the configID). Clear
-    -- cache for the OLD spec so a return to it re-scans.
-    -- For now we clear ALL cached scans on every debounced eval to be
-    -- safe — scan cost is one-time and small.
+    -- Spec changes and loadout swaps invalidate the node cache (different
+    -- configID, possibly different node IDs). Trait-config updates within
+    -- the same spec re-use the cache (same configID, only rank changes).
     if reason == "PLAYER_SPECIALIZATION_CHANGED"
        or reason == "ACTIVE_TALENT_GROUP_CHANGED" then
       nodeCache = {}

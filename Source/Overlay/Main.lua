@@ -4,7 +4,8 @@
 -- Shows live timer + watcher state for at-a-glance verification:
 --   - Time until our scheduled alert fires
 --   - How many captured auras are still alive
---   - Trigger buff's actual remaining time (when readable; private in combat)
+--   - Trigger buff's remaining time (read directly out of combat;
+--     predictive model in combat — direct aura reads are taint-risky)
 --   - Last alert outcome (fired / suppressed / —)
 --
 -- Position is persisted in APEX_FURY_UI_STATE.overlay.
@@ -84,9 +85,6 @@ local function ReadTriggerRemaining()
   return nil, nil
 end
 
----------------------------------------------------------------------------
--- Update display — called from OnUpdate
----------------------------------------------------------------------------
 ---------------------------------------------------------------------------
 -- Render line 7 — the talent gate status. Always shown.
 ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@
 --     onSet      = function(name, old, new) end,  -- optional: hook after Set
 --     onReset    = function() end,          -- optional: hook after Reset
 --     migrations = function(sv) end,        -- optional: runs during InitializeData
+--     quietKeys  = { "sound_id", ... },     -- optional: keys to skip from CONFIG.Set log
 --   })
 --
 -- Returns: { Options, Defaults, IsValidOption, Get, Set, Reset, InitializeData }

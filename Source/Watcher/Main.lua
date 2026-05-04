@@ -1,46 +1,69 @@
 ﻿-------------------------------------------------------------------------------
--- ApexFury — Stack alert via cast detection + targeted aura tracking
+-- ApexFury — Stack alert via cast-driven predictive timing
 --
 -- Background:
---   In Midnight 12.0, many class buffs (incl. Rising Fury) are flagged as
---   "private auras" — fields are secret values during combat. We cannot
---   directly observe stack counts, so we model them ourselves.
+--   In Midnight 12.0, Rising Fury is flagged as a "private aura" — the
+--   `applications`, `expirationTime`, `spellId`, and `name` fields all
+--   return secret values during combat. We cannot read stack count or
+--   identify the aura while the player is in combat.
 --
--- Design:
+--   We previously tried to identify the Rising Fury aura instance among
+--   the auras the engine adds within ~1s of Dragonrage cast and observe
+--   its drop time. That approach was unworkable: every other aura the
+--   player happens to gain in that window — Augmentation Evoker buffs
+--   (Prescience, Ebon Might), healer HoTs (Renewing Mist, Atonement),
+--   the player's own combat potion buff, trinket procs, hero-talent
+--   procs (Light's Potential), Tip the Scales, etc. — also lands in the
+--   captured set with secret-value spellIds, and any of them can win
+--   the fallback heuristic. We had a blacklist that grew without bound
+--   and still couldn't cover every group composition or potion variant.
+--
+-- Design — predictive only:
 --   1. Watch UNIT_SPELLCAST_SUCCEEDED for the configured TRIGGER spell.
---      Cast events are NOT subject to the private-aura system.
+--      Cast events are NOT subject to the private-aura system; spell IDs
+--      and unit tokens are always public.
 --   2. Schedule the alert at +(threshold - 1) * interval seconds.
---   3. Identify Dragonrage's active state in UNIT_AURA's addedAuras
---      payload. The cast spell ID 375087 is NOT the long-lived state —
---      it applies as a brief ~3s pulse aura. The actual "DR is active"
---      buff is Rising Fury (DR_STATE_AURA_IDS, name "Rising Fury"),
---      which lasts the full Animosity-extended duration. We match by
---      spellId, then by name, with a transient-buff exclusion list and
---      cascade/predictive fallbacks for cases where field reads are
---      secret values during combat. See HandleAuraUpdate below for
---      the full identification flow (capture phase + verify-on-drop).
---   4. Track empower casts via UNIT_SPELLCAST_SUCCEEDED for known empower
---      spell IDs (Fire Breath, Eternity Surge). This catches both
---      normal channel-released empowers AND Tip-the-Scales instant ones,
---      which the older UNIT_SPELLCAST_EMPOWER_STOP path missed. Each
---      empower extends DR per the Animosity formula
---      (+5s × 0.75^N diminishing per cast).
---   5. When the tracked Rising Fury instance is removed (UNIT_AURA's
---      removedAuraInstanceIDs payload), mark triggerDropTime — the
---      Risen Fury linger phase begins.
---   6. At alert fire time:
---      - If combat_only and player not in combat → defer (alertPending=true)
---      - If actionability_gate and player can't act (vehicle/mount/CC/
---        possession) → defer with reason
---      - Otherwise fire sound immediately (subject to linger-remaining gate)
---   7. On combat re-entry / vehicle exit / CC end / mount change with a
---      pending alert, re-evaluate via the linger-model gate. A 0.5s
---      polling fallback resolves transitions that don't fire dedicated
---      events. If presumed RF/Risen Fury time remaining is below
---      min_remaining, suppress; otherwise fire.
---   8. Linger window for Rising Fury → Risen Fury after Dragonrage drops:
---        expires = triggerDropTime + min(linger_max, stacks_at_drop * linger_per_stack)
---      Stacks at drop are computed from elapsed time during DR.
+--   3. Track empower casts via UNIT_SPELLCAST_SUCCEEDED for known empower
+--      spell IDs (Fire Breath, Eternity Surge, plus their Font-of-Magic
+--      variants). Each empower extends Dragonrage per the Animosity
+--      formula (+5s × 0.75^N diminishing per cast). UNIT_SPELLCAST_SUCCEEDED
+--      catches Tip-the-Scales instant releases too, which _EMPOWER_STOP
+--      with complete=true does not.
+--   4. Compute `expectedTriggerEnd = castTime + 18 + Σ 5 × 0.75^i` where
+--      i ranges over empowers cast so far. This is empirically accurate
+--      to ±0.05s on real-pull cycles. It's the source of truth for "when
+--      does Dragonrage end" — we never observe the actual aura drop in
+--      combat, but the deterministic Animosity formula matches reality.
+--   5. At alert fire time:
+--      - If combat_only and player not in combat → defer.
+--      - If actionability_gate and player can't act (vehicle / mount /
+--        CC / possession) → defer with reason.
+--      - Otherwise fire sound (subject to predicted-duration and linger
+--        gates inside FireAlert).
+--   6. On combat re-entry / vehicle exit / CC end / mount change with a
+--      pending alert, re-evaluate. The linger gate uses the predictive
+--      end as the "drop time" — once `now > expectedTriggerEnd`, we're in
+--      the Risen Fury linger phase, expiring at
+--        expectedTriggerEnd + min(linger_max, stacks × linger_per_stack)
+--      where stacks is computed by clamping elapsed to expectedTriggerEnd.
+--
+-- What we do NOT track:
+--   - Aura identification (spellId or name match). All field reads are
+--     secret values in combat for the auras we'd want to identify, so
+--     this never produces useful data — confirmed across 3855 lines of
+--     real-pull log with zero successful positive matches.
+--   - Trigger drop observation. We don't know when Rising Fury actually
+--     ends; the predictive Animosity model is our authority instead. Edge
+--     cases where the user manually cancels Rising Fury or some unknown
+--     mechanic ends DR early aren't caught — but they weren't caught
+--     before either (we'd have observed the wrong aura). PLAYER_DEAD and
+--     PLAYER_LEAVING_WORLD remain handled.
+--
+-- For the overlay's out-of-combat trigger-remaining display, we still
+-- bookkeep a `capturedAuraIDs` set so the overlay can iterate it and
+-- query `C_UnitAuras.GetAuraDataByAuraInstanceID` for whichever aura has
+-- the longest remaining time. That's purely cosmetic — no in-combat
+-- decisions read it.
 -------------------------------------------------------------------------------
 
 local Watcher = ApexFury.Watcher
@@ -50,19 +73,19 @@ local Debug = ApexFury.Debug
 -- Internal state ----------------------------------------------------------
 local castTime              -- when trigger spell last cast (or nil)
 local alertScheduledFor     -- absolute time the timer is set to elapse
-local capturedAuraIDs       -- set: { [auraInstanceID] = true }
-local capturedAuraMeta      -- per-aura diagnostic info: { [id] = { capturedAt, spellId } }
-local firstCapturedID       -- presumed trigger parent (e.g. Dragonrage)
-local triggerDropTime       -- when firstCapturedID was removed (parent buff ended)
+local capturedAuraIDs       -- set: { [auraInstanceID] = true } — bookkeeping
+                            -- for the overlay's OOC trigger-remaining read;
+                            -- never used to identify Rising Fury.
 local empowerCount          -- empower casts observed since trigger cast
-local expectedTriggerEnd    -- predicted absolute time the trigger buff will end
+local expectedTriggerEnd    -- predicted absolute time the trigger buff will
+                            -- end. Drives every in-combat timing decision.
 local alertFired            -- bool: sound has been played
 local alertPending          -- bool: timer elapsed but waiting for combat
 local alertSuppressed       -- bool: alert was cancelled
 local lastFiredTime         -- last time alert actually played sound
 local lastFiredOffset       -- precise elapsed seconds from cast to fire
 local lastSuppressOffset    -- precise elapsed seconds from cast to suppression
-local lastSuppressReason    -- "buff_dropped" / "rf_too_short" / "trigger_too_short" / "rf_expired" / "death" / "zone" / nil
+local lastSuppressReason    -- "linger_expired" / "rf_too_short" / "trigger_too_short" / "death" / "zone" / nil
 local pendingTimer          -- C_Timer ticker handle (or nil)
 local pendingDeferReason    -- "ooc" / "vehicle" / "vehicle_ui" / "mounted" / "possessed" / "loss_of_control"
 local pendingPollTimer      -- C_Timer.NewTicker handle while alertPending; resolves the deferral
@@ -77,6 +100,17 @@ local CAPTURE_WINDOW = 1.0  -- seconds after cast to capture newly-added auras
 -- loses (e.g. unextended Dragonrage at exactly 18s yields 3 stacks of
 -- Rising Fury, not 4). 0.1s puts us firmly past the boundary.
 local THRESHOLD_BUFFER = 0.1
+
+-- Empower arrival-latency grace. UNIT_SPELLCAST_SUCCEEDED arrives client-side
+-- after the server has already resolved the cast and (if Animosity applied)
+-- extended Dragonrage. Under typical M+ latency (~100-300ms) and rarely up
+-- to ~500ms, an empower truly cast within DR can SUCCEED on the client up
+-- to that long after our predicted DR end. Without a grace, those late-
+-- arriving SUCCEEDED events get rejected and we under-count empowers,
+-- false-suppressing high-threshold alerts on cycles that did extend.
+-- 0.5s covers typical lag without letting truly post-DR empowers (cast
+-- after server-side DR ended, no Animosity applied) inflate the model.
+local EMPOWER_LATENCY_GRACE = 0.5
 
 -- Empower spell IDs we track for Animosity duration extension. Counted
 -- via UNIT_SPELLCAST_SUCCEEDED (not _EMPOWER_STOP) so Tip-the-Scales
@@ -98,48 +132,6 @@ local EMPOWER_SPELL_IDS = {
   [382411] = "Eternity Surge (FoM)",   -- Font of Magic variant
 }
 
--- Known transient buffs the engine occasionally puts at addedAuras[1]
--- ahead of Dragonrage. When the trigger-spellId/name lookups all return
--- secret values during combat, we exclude these from being chosen as
--- firstCapturedID so a Tip-the-Scales consumption (~1-2s after DR cast)
--- doesn't get mistaken for DR ending. Add new entries here as we
--- identify them in real-pull bug reports.
-local TRANSIENT_AURA_SPELL_IDS = {
-  [370553] = "Tip the Scales",
-  [375087] = "Dragonrage cast pulse",  -- the cast spell ID applies as a
-                                       -- brief ~3s aura, not the long-
-                                       -- lived state. Skip it from the
-                                       -- non-transient fallback so we
-                                       -- don't pick it.
-}
-
--- Aura instance spell IDs that represent "Dragonrage is active" — the
--- long-lived state proxy we want to track for DR end timing. These are
--- Rising Fury variants (the talent that grants the haste-stacking buff
--- alongside DR). The cast spell ID 375087 is NOT here because it
--- applies as only a brief ~3s buff (the cast pulse), confirmed via
--- training-dummy testing 2026-05-01 — instance with sID=375087 lived
--- 3.26s while sID=1271783 (Rising Fury) lived 31.67s, matching the
--- predicted Animosity-extended DR end.
---
--- Different Rising Fury talent ranks appear to have different aura
--- IDs. We've observed 1271687 (TalentGate name match), 1271783
--- (training dummy at rank 4), and 1271796 (Wowhead's listed page).
--- All three are recognized as DR-state proxies. When new ranks or
--- variants surface in real-pull logs, add them here.
-local DR_STATE_AURA_IDS = {
-  [1271783] = true,  -- Rising Fury (rank 4 observed)
-  [1271687] = true,  -- Rising Fury variant
-  [1271796] = true,  -- Rising Fury variant
-}
-local DR_STATE_AURA_NAME = "Rising Fury"
-
--- The cast spell ID for Dragonrage. When the user has the default
--- trigger configured, we match DR-state aura IDs above. If they've
--- changed the trigger (testing/debugging), fall back to the configured
--- spell ID for direct matching.
-local DRAGONRAGE_CAST_SPELL_ID = 375087
-
 -- Trigger duration model (Devastation Evoker / Dragonrage defaults).
 -- Used to PREDICT how long DR will run based on observed empower casts.
 -- Each empower extends DR via the Animosity talent: +5s with 25%
@@ -155,9 +147,6 @@ local function ResetState()
   castTime = nil
   alertScheduledFor = nil
   capturedAuraIDs = {}
-  capturedAuraMeta = {}
-  firstCapturedID = nil
-  triggerDropTime = nil
   empowerCount = 0
   expectedTriggerEnd = nil
   alertFired = false
@@ -184,9 +173,26 @@ end
 ---------------------------------------------------------------------------
 -- Compute the expected trigger buff end time based on empower casts so far.
 -- Animosity formula: +5s per empower with 25% diminishing returns per cast.
+--
+-- Without Animosity, empowers don't extend Dragonrage at all — predicted
+-- end stays at the 18s base. We consult TalentGate's `hasAnimosity` flag
+-- to know which formula applies. TalentGate is started before the watcher
+-- activates the trigger cycle in normal startup order, but defaults to
+-- "with Animosity" if the gate isn't ready yet (the gate's own warning
+-- chat message is the user's signal that threshold ≥4 won't fire).
 ---------------------------------------------------------------------------
 local function ComputeExpectedTriggerEnd()
   if not castTime then return nil end
+
+  local hasAnimosity = true
+  local gate = ApexFury.TalentGate and ApexFury.TalentGate.GetState
+               and ApexFury.TalentGate.GetState() or nil
+  if gate and gate.hasAnimosity == false then hasAnimosity = false end
+
+  if not hasAnimosity then
+    return castTime + DR_BASE_DURATION
+  end
+
   local totalExtension = 0
   for i = 0, empowerCount - 1 do
     totalExtension = totalExtension + ANIMOSITY_EXTENSION * (ANIMOSITY_DIMINISHING ^ i)
@@ -195,20 +201,37 @@ local function ComputeExpectedTriggerEnd()
 end
 
 ---------------------------------------------------------------------------
+-- The "predicted DR end" used everywhere downstream. Always returns a
+-- valid number when castTime is set — falls back to base 18s if the
+-- empower formula hasn't produced a value yet (shouldn't happen since
+-- OnTriggerCast sets expectedTriggerEnd at cast time, but defend anyway).
+---------------------------------------------------------------------------
+local function PredictedTriggerEnd()
+  if not castTime then return nil end
+  return expectedTriggerEnd or (castTime + DR_BASE_DURATION)
+end
+
+---------------------------------------------------------------------------
 -- Compute the maximum stack count delivered by the trigger.
 --
--- Used for linger duration math. Stack ticks happen at t=interval,
--- 2*interval, ... while the trigger is active. A tick scheduled exactly
--- when the trigger ENDS doesn't fire (lost to the race), so we subtract a
--- tiny epsilon. The threshold-reached check itself uses the predictive
--- expectedTriggerEnd model (see CheckTriggerRanLongEnough).
+-- Stack ticks happen at t=interval, 2*interval, ... while the trigger is
+-- active. A tick scheduled exactly when the trigger ENDS doesn't fire
+-- (lost to the race), so we subtract a tiny epsilon.
+--
+-- The "effective end" for stack accumulation is min(now, predictedEnd):
+-- during DR (now < predictedEnd) stacks grow with elapsed time; once DR
+-- has predicted-ended (now >= predictedEnd), stacks freeze at whatever
+-- they reached when DR ended. This is the same shape as the previous
+-- triggerDropTime-or-now code, but driven by the deterministic Animosity
+-- formula instead of an aura observation we can't reliably make.
 ---------------------------------------------------------------------------
 local function ComputeMaxStacksReached()
   if not castTime then return 0 end
   local interval = Config.Get(Config.Options.STACK_INTERVAL)
   local maxStacks = Config.Get(Config.Options.MAX_STACKS)
 
-  local effectiveEnd = triggerDropTime or GetTime()
+  local now = GetTime()
+  local effectiveEnd = math.min(now, PredictedTriggerEnd())
   local elapsed = effectiveEnd - castTime - 0.05  -- boundary tick epsilon
   if elapsed < 0 then return 1 end
 
@@ -217,60 +240,49 @@ end
 
 ---------------------------------------------------------------------------
 -- Will the trigger buff run long enough for the threshold-th stack tick to
--- definitively fire? Uses observed drop time when known, otherwise the
--- predictive expectedTriggerEnd from empower-cast tracking.
+-- definitively fire? Uses the predictive Animosity model — the only signal
+-- we have for DR duration in 12.0 (private aura, can't observe drop in
+-- combat).
 ---------------------------------------------------------------------------
 local function CheckTriggerRanLongEnough()
   if not castTime then return false end
   local interval = Config.Get(Config.Options.STACK_INTERVAL)
   local threshold = Config.Get(Config.Options.THRESHOLD)
   local requiredDuration = (threshold - 1) * interval + THRESHOLD_BUFFER
-
-  local actualDuration
-  if triggerDropTime then
-    actualDuration = triggerDropTime - castTime
-  else
-    actualDuration = (expectedTriggerEnd or (castTime + DR_BASE_DURATION)) - castTime
-  end
-
+  local actualDuration = PredictedTriggerEnd() - castTime
   return actualDuration >= requiredDuration, actualDuration, requiredDuration
 end
 
 ---------------------------------------------------------------------------
 -- Compute estimated linger remaining (seconds). Returns:
---   math.huge when trigger parent is still active (linger hasn't started yet)
+--   math.huge when DR is still predicted to be active (linger not started)
 --   number when in linger window
 --   0 when linger has fully expired
 ---------------------------------------------------------------------------
 local function EstimateLingerRemaining()
   if not castTime then return 0 end
-  if not triggerDropTime then return math.huge end
+  local now = GetTime()
+  local predictedEnd = PredictedTriggerEnd()
+  if now < predictedEnd then return math.huge end
 
   local lingerPer = Config.Get(Config.Options.LINGER_PER_STACK)
   local lingerMax = Config.Get(Config.Options.LINGER_MAX)
-
   local stacksAtDrop = ComputeMaxStacksReached()
   local lingerDuration = math.min(lingerMax, stacksAtDrop * lingerPer)
-  local expiresAt = triggerDropTime + lingerDuration
-  return math.max(0, expiresAt - GetTime())
+  local expiresAt = predictedEnd + lingerDuration
+  return math.max(0, expiresAt - now)
 end
 
 ---------------------------------------------------------------------------
 -- Are stacks still available for the alert to be meaningful?
 --
--- The capture set isn't a reliable proxy for "RF/Risen Fury still alive":
--- Rising Fury's first stack ticks at +6s (outside our 1s capture window),
--- so capturedAuraIDs typically only ever holds the trigger parent (DR).
--- When DR drops, captured becomes empty even though RF→Risen Fury can
--- linger for up to LINGER_MAX more seconds.
---
--- Use the time-based linger model instead:
---   - DR still active (no triggerDropTime): RF presumed accumulating.
---   - DR dropped: linger = stacksAtDrop × LINGER_PER_STACK (capped).
+-- During predicted DR: stacks are accumulating, presumed available.
+-- After predicted DR end: linger phase, available iff linger remaining > 0.
 ---------------------------------------------------------------------------
 local function PresumablyHasStacks()
   if not castTime then return false end
-  if not triggerDropTime then return true end
+  local now = GetTime()
+  if now < PredictedTriggerEnd() then return true end
   return EstimateLingerRemaining() > 0
 end
 
@@ -292,22 +304,43 @@ local function FireAlert(reasonContext)
     return
   end
 
-  -- RF / Risen Fury still presumed alive per linger model? (Captured-set
-  -- check would be unreliable since RF's first stack is outside our 1s
-  -- capture window.)
+  -- One-line dump of every gate input at the exact moment FireAlert was
+  -- entered, BEFORE any gate runs. Useful for verifying deferred-alert
+  -- resolution paths (TryFirePending → FireAlert) where the user wants
+  -- to see whether the model thought DR was still active or in linger.
+  if Config.Get(Config.Options.VERBOSE) then
+    local _, actualDur, requiredDur = CheckTriggerRanLongEnough()
+    local lingerRem = EstimateLingerRemaining()
+    local elapsed = castTime and (GetTime() - castTime) or 0
+    Debug.Log("WATCHER",
+      "FireAlert(%s) @ +%.2fs — predDR=%.2fs req=%.2fs linger=%s empowers=%d",
+      reasonContext, elapsed,
+      actualDur or 0, requiredDur or 0,
+      lingerRem == math.huge and "active" or string.format("%.2fs", lingerRem),
+      empowerCount or 0)
+  end
+
+  -- RF / Risen Fury still presumed alive per the predictive linger model?
+  -- (We never observe the actual drop in combat — Rising Fury's fields are
+  -- secret values during combat — so the Animosity-extended predicted end
+  -- is the source of truth. After predicted end, linger ticks down toward
+  -- linger_max.)
   if not PresumablyHasStacks() then
     alertSuppressed = true
-    lastSuppressReason = "buff_dropped"
+    lastSuppressReason = "linger_expired"
     if castTime then lastSuppressOffset = GetTime() - castTime end
-    Debug.Log("WATCHER", "Alert suppressed @ %s — RF/Risen Fury linger expired", reasonContext)
+    local predDur = (expectedTriggerEnd and castTime)
+                    and (expectedTriggerEnd - castTime) or 0
+    Debug.Log("WATCHER",
+      "Alert suppressed @ %s — RF/Risen Fury linger expired (predDR=%.2fs, stacksAtDrop=%d, empowers=%d)",
+      reasonContext, predDur, ComputeMaxStacksReached(), empowerCount or 0)
     return
   end
 
   -- Did the trigger buff run long enough to actually deliver the threshold
   -- stack? Linger auras can still be alive even when the threshold tick was
   -- lost to the trigger-end race (e.g. unextended DR at 18s yields 3 stacks
-  -- of Rising Fury, not 4). Uses predictive duration when DR is still
-  -- active, observed drop time when it has ended.
+  -- of Rising Fury, not 4). Driven by the predictive Animosity model.
   local longEnough, actualDur, requiredDur = CheckTriggerRanLongEnough()
   if not longEnough then
     alertSuppressed = true
@@ -318,7 +351,7 @@ local function FireAlert(reasonContext)
     return
   end
 
-  -- Linger-remaining gate (only relevant after trigger parent dropped)
+  -- Linger-remaining gate (only relevant after predicted DR end)
   local minRemaining = Config.Get(Config.Options.MIN_REMAINING) or 0
   local lingerRem = EstimateLingerRemaining()
   if lingerRem ~= math.huge and lingerRem < minRemaining then
@@ -360,9 +393,21 @@ local function FireAlert(reasonContext)
   lastFiredTime = GetTime()
   if castTime then lastFiredOffset = lastFiredTime - castTime end
 
-  -- Debug log only — sound itself is the user-facing alert; no chat spam.
-  Debug.Event("WATCHER", "Alert fired @ %s (threshold=%d, offset=%.3fs)",
-    reasonContext, Config.Get(Config.Options.THRESHOLD) or 0, lastFiredOffset or 0)
+  -- Cycle resolution summary. One always-on line that captures every
+  -- relevant number from the cycle so post-pull review can verify each
+  -- decision without verbose mode. Suppress branches above also include
+  -- their own structured summaries.
+  local predDur = (expectedTriggerEnd and castTime)
+                  and (expectedTriggerEnd - castTime) or 0
+  local lingerRemFinal = EstimateLingerRemaining()
+  Debug.Event("WATCHER",
+    "Alert fired @ %s (threshold=%d, offset=%.3fs, predDR=%.2fs, empowers=%d, linger=%s)",
+    reasonContext,
+    Config.Get(Config.Options.THRESHOLD) or 0,
+    lastFiredOffset or 0,
+    predDur,
+    empowerCount or 0,
+    lingerRemFinal == math.huge and "active" or string.format("%.2fs", lingerRemFinal))
 end
 
 ---------------------------------------------------------------------------
@@ -501,6 +546,20 @@ end
 local function OnAlertTimerExpired()
   if alertFired or alertSuppressed then return end
 
+  -- Snapshot the predictive state at the exact moment the timer fires.
+  -- This is the line that lets you verify, post-pull, "what did the model
+  -- think when the alert was supposed to land?" — independent of which
+  -- branch (defer / fire / suppress) the cycle takes after this point.
+  if Config.Get(Config.Options.VERBOSE) then
+    local elapsed = castTime and (GetTime() - castTime) or 0
+    local predDur = (expectedTriggerEnd and castTime)
+                    and (expectedTriggerEnd - castTime) or 0
+    Debug.Log("WATCHER",
+      "Alert timer expired @ +%.2fs — predDR=%.2fs empowers=%d combat=%s",
+      elapsed, predDur, empowerCount or 0,
+      tostring(UnitAffectingCombat("player")))
+  end
+
   if Config.Get(Config.Options.COMBAT_ONLY) and not UnitAffectingCombat("player") then
     return DeferAlert("ooc")
   end
@@ -532,22 +591,44 @@ local function OnTriggerCast()
   local delay = math.max(0, (threshold - 1) * interval)
   alertScheduledFor = castTime + delay
 
-  Debug.Log("WATCHER", "Trigger cast — timer at +%.2fs (suppress unless DR >= %.2fs)",
-    delay, delay + THRESHOLD_BUFFER)
+  -- Surface the TalentGate input that drove ComputeExpectedTriggerEnd's
+  -- choice of formula. If hasAnimosity is unexpectedly false at cast time
+  -- (e.g. TalentGate hasn't finished initial evaluation, or read failure),
+  -- threshold ≥4 alerts will deterministically suppress as trigger_too_short
+  -- and this is the line that explains why.
+  local gate = ApexFury.TalentGate and ApexFury.TalentGate.GetState
+               and ApexFury.TalentGate.GetState() or nil
+  local predDur = expectedTriggerEnd and (expectedTriggerEnd - castTime) or 0
+  Debug.Log("WATCHER",
+    "Trigger cast — timer at +%.2fs (suppress unless DR >= %.2fs, hasAnimosity=%s, base predDR=%.2fs)",
+    delay, delay + THRESHOLD_BUFFER,
+    tostring(gate and gate.hasAnimosity), predDur)
 
   pendingTimer = C_Timer.NewTimer(delay, OnAlertTimerExpired)
 
-  -- Note: an earlier `C_Timer.After(0.05)` GetPlayerAuraBySpellID
-  -- verification step was removed once we identified that the cast
-  -- spell ID 375087 isn't the long-lived state buff in 12.0 — it's a
-  -- brief ~3s pulse, so the lookup was returning nil 100% of the time
-  -- in real logs. Capture-phase Rising Fury matching (HandleAuraUpdate
-  -- below) handles identification directly, with the cascade and
-  -- predicted-vs-observed strategies as runtime safety nets.
+  -- All timing decisions downstream consult `expectedTriggerEnd`, which
+  -- is updated by each empower cast (UNIT_SPELLCAST_SUCCEEDED). We never
+  -- observe the actual Rising Fury aura drop — its fields are secret
+  -- values in combat — and don't try to.
 end
 
 ---------------------------------------------------------------------------
--- UNIT_AURA handler
+-- UNIT_AURA handler.
+--
+-- We do NOT identify Rising Fury here. The aura's spellId, name,
+-- expirationTime, and applications fields are all secret values during
+-- combat (private aura system), and even when the engine occasionally
+-- puts them at addedAuras[1] without other auras around, the captured
+-- set always also contains group buffs (Prescience, Ebon Might, HoTs from
+-- healers), the player's potion buff, hero-talent procs, and Tip the
+-- Scales — any of which can collide with the heuristic. Real-pull logs
+-- show positive spellId/name matching never succeeded across thousands
+-- of UNIT_AURA events in combat, so the entire identification path was
+-- doing nothing useful and the fallback heuristic was producing the
+-- wrong answer. The predictive Animosity model is now the single source
+-- of truth for trigger duration; this handler just bookkeeps the
+-- captured set so the overlay's out-of-combat trigger-remaining display
+-- can iterate it and pick the longest-remaining aura.
 ---------------------------------------------------------------------------
 local function HandleAuraUpdate(info)
   if not castTime then return end
@@ -555,329 +636,45 @@ local function HandleAuraUpdate(info)
 
   local now = GetTime()
   local sinceCast = now - castTime
+  local verbose = Config.Get(Config.Options.VERBOSE)
 
-  -- Capture phase: within ~1s of cast, remember every newly-added
-  -- aura's instance ID. Identify Dragonrage by its spellId or name
-  -- inside the addedAuras struct directly — `GetPlayerAuraBySpellID`
-  -- has been observed to return nil for DR in 12.0 (cast spellID
-  -- apparently doesn't match the buff lookup), so we can't rely on
-  -- a separate spell-lookup verification path.
-  --
-  -- Identification strategies, in order:
-  --   1. aura.spellId == triggerID (positive match — most reliable)
-  --   2. aura.name == triggerName (positive match — fallback if
-  --      spellId is a secret value during combat)
-  --   3. First non-transient aura (skip known short-lived buffs like
-  --      Tip the Scales that get consumed seconds after DR cast)
-  --   4. addedAuras[1] (last-resort first-arrival heuristic)
-  --
-  -- All field reads are pcall + issecretvalue gated.
+  -- Add phase: track new aura instance IDs within the capture window.
+  -- No identification, no scoring — this set is purely a list of
+  -- observable aura instances on the player at cast time, used by the
+  -- overlay's OOC trigger-remaining read.
   if sinceCast < CAPTURE_WINDOW and info.addedAuras then
-    local verbose = Config.Get(Config.Options.VERBOSE)
-    local triggerID = Config.Get(Config.Options.SPELL_ID)
-
-    -- Determine which buff IDs/names mean "DR is active" for the
-    -- current configuration. With default Dragonrage, match against
-    -- Rising Fury (the long-lived state proxy). If the user has
-    -- changed the trigger spell, match against that spell directly.
-    local stateAuraIDs, stateAuraName
-    if triggerID == DRAGONRAGE_CAST_SPELL_ID then
-      stateAuraIDs = DR_STATE_AURA_IDS
-      stateAuraName = DR_STATE_AURA_NAME
-    else
-      stateAuraIDs = { [triggerID] = true }
-      local ok, n = pcall(function()
-        return C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(triggerID) or nil
-      end)
-      if ok and type(n) == "string" then stateAuraName = n end
-    end
-
-    local matchedDR        -- positively identified via spellId or name
-    local nonTransientGuess -- first aura in this batch whose spellId isn't a known transient
-    local firstAuraInBatch  -- absolute first aura in this batch (last-resort fallback)
-
     for idx, aura in ipairs(info.addedAuras) do
       local idOk, id = pcall(function() return aura.auraInstanceID end)
-      if idOk and type(id) == "number" then
-        local isNew = not capturedAuraIDs[id]
+      if idOk and type(id) == "number" and not capturedAuraIDs[id] then
         capturedAuraIDs[id] = true
-
-        if not firstAuraInBatch then firstAuraInBatch = id end
-
-        -- Read spellId with secret-value gating
-        local sIDOk, sID = pcall(function()
-          local s = aura.spellId
-          if type(s) ~= "number" then return nil end
-          if issecretvalue and issecretvalue(s) then return nil end
-          return s
-        end)
-        local readableSID = sIDOk and type(sID) == "number" and sID or nil
-
-        -- Diagnostic metadata. Lets the drop log emit a lifetime and
-        -- the cycle-complete summary identify which sIDs were in the
-        -- captured set without re-querying the API.
-        if isNew then
-          capturedAuraMeta[id] = { capturedAt = now, spellId = readableSID }
-        end
-
-        -- Strategy 1: spellId positive match (against DR state aura IDs,
-        -- not the cast ID — see DR_STATE_AURA_IDS comment)
-        if not matchedDR and readableSID and stateAuraIDs[readableSID] then
-          matchedDR = id
-        end
-
-        -- Strategy 2: name positive match (only if spellId didn't match)
-        if not matchedDR and stateAuraName then
-          local nOk, name = pcall(function()
-            local x = aura.name
-            if type(x) ~= "string" then return nil end
-            if issecretvalue and issecretvalue(x) then return nil end
-            return x
+        if verbose then
+          -- Read spellId for the diagnostic line only (secret-gated; never
+          -- acted on). Format kept stable for cross-version log comparability.
+          local sIDOk, sID = pcall(function()
+            local s = aura.spellId
+            if type(s) ~= "number" then return nil end
+            if issecretvalue and issecretvalue(s) then return nil end
+            return s
           end)
-          if nOk and name == stateAuraName then
-            matchedDR = id
-          end
-        end
-
-        -- Strategy 3: track first non-transient as a guess fallback.
-        -- If spellId is readable AND it's a known transient → skip.
-        -- If spellId is unreadable → can't tell, treat as candidate.
-        if not nonTransientGuess then
-          if not readableSID or not TRANSIENT_AURA_SPELL_IDS[readableSID] then
-            nonTransientGuess = id
-          end
-        end
-
-        if verbose and isNew then
+          local readableSID = sIDOk and type(sID) == "number" and sID or nil
           Debug.Log("CAPTURE", "  +%.3fs add[%d] instance=%d sID=%s",
             sinceCast, idx, id, tostring(readableSID))
         end
       end
     end
-
-    -- Apply identification. Two precedence rules to prevent later UNIT_AURA
-    -- events from clobbering a correct early pick:
-    --   1. A positive spellId/name match ALWAYS wins. It can replace
-    --      either a previous positive match (rare — would mean two auras
-    --      claim the trigger spell) or a fallback guess.
-    --   2. A fallback guess (non-transient or first-arrival) is ONLY
-    --      used to set firstCapturedID for the first time. It never
-    --      overrides an already-set firstCapturedID, even if that prior
-    --      pick was itself a fallback guess. Otherwise event 2's single-
-    --      aura batch would pick a different "non-transient" each time
-    --      and the real DR (caught in event 1) would get displaced.
-    if matchedDR then
-      if matchedDR ~= firstCapturedID then
-        Debug.Log("WATCHER",
-          "DR positively identified: instance %d (spellId/name match; was %s)",
-          matchedDR, tostring(firstCapturedID))
-        firstCapturedID = matchedDR
-      end
-    elseif not firstCapturedID then
-      -- First time setting — use best fallback in priority order.
-      if nonTransientGuess then
-        firstCapturedID = nonTransientGuess
-        Debug.Log("WATCHER",
-          "DR initial guess: instance %d (non-transient fallback)", firstCapturedID)
-      elseif firstAuraInBatch then
-        firstCapturedID = firstAuraInBatch
-        Debug.Log("WATCHER",
-          "DR initial guess: instance %d (first-arrival; all candidates were known transients)",
-          firstCapturedID)
-      end
-    end
-    -- Otherwise: firstCapturedID already set by a previous event. Don't
-    -- override with another fallback guess.
   end
 
-  -- Removal phase: removedAuraInstanceIDs is a plain numeric array,
-  -- always safe to read. When the first captured ID drops, mark the
-  -- linger window start. When all captured IDs are gone, the linger
-  -- has fully expired.
+  -- Remove phase: drop tracking. removedAuraInstanceIDs is a plain
+  -- numeric array, always safe to read. We don't care which aura
+  -- dropped — the predictive model decides when DR ended.
   if info.removedAuraInstanceIDs then
-    local sawCapturedRemoval = false
-    local verbose = Config.Get(Config.Options.VERBOSE)
     for _, id in ipairs(info.removedAuraInstanceIDs) do
       if capturedAuraIDs[id] then
         capturedAuraIDs[id] = nil
-        sawCapturedRemoval = true
         if verbose then
-          local meta = capturedAuraMeta[id]
-          local lifetime = meta and (now - meta.capturedAt) or nil
-          local sIDStr = meta and tostring(meta.spellId) or "?"
-          if lifetime then
-            Debug.Log("CAPTURE",
-              "  +%.3fs drop instance=%d (lived %.2fs sID=%s)%s",
-              sinceCast, id, lifetime, sIDStr,
-              id == firstCapturedID and " [first]" or "")
-          else
-            Debug.Log("CAPTURE", "  +%.3fs drop instance=%d%s", sinceCast, id,
-              id == firstCapturedID and " [first]" or "")
-          end
-        end
-        if id == firstCapturedID and not triggerDropTime then
-          -- Verify the trigger spell is ACTUALLY gone before declaring
-          -- it dropped. Two strategies, in order:
-          --   A. Positive identification: walk the remaining captured
-          --      auras, read each one's spellId/name (with secret-value
-          --      gating), match against the trigger.
-          --   B. Runtime adaptation (heuristic): if the drop happens
-          --      too early to plausibly be Dragonrage (DR base is 18s,
-          --      we use 13s threshold for safety margin), the
-          --      just-dropped aura was a transient we couldn't identify
-          --      because all its field reads were secret values during
-          --      combat. Switch to ANY other surviving captured aura.
-          --      If THAT one also drops short, the next drop event will
-          --      cascade into another switch — eventually landing on a
-          --      long-lived aura that outlives the alert window.
-          --
-          -- Cannot use GetPlayerAuraBySpellID — observed to consistently
-          -- return nil for Dragonrage in 12.0.
-          local TOO_SHORT_FOR_DR = 13
-
-          local triggerID = Config.Get(Config.Options.SPELL_ID)
-
-          -- Same DR-state aura ID/name logic as capture phase. Match
-          -- the long-lived state buff (Rising Fury), not the brief
-          -- cast pulse aura (Dragonrage cast spell ID).
-          local stateAuraIDs, stateAuraName
-          if triggerID == DRAGONRAGE_CAST_SPELL_ID then
-            stateAuraIDs = DR_STATE_AURA_IDS
-            stateAuraName = DR_STATE_AURA_NAME
-          else
-            stateAuraIDs = { [triggerID] = true }
-            local ok, n = pcall(function()
-              return C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(triggerID) or nil
-            end)
-            if ok and type(n) == "string" then stateAuraName = n end
-          end
-
-          -- Build set of IDs being dropped in THIS event so we don't
-          -- pick a candidate that's about to vanish in this same loop.
-          local thisEventDrops = {}
-          for _, dID in ipairs(info.removedAuraInstanceIDs) do
-            thisEventDrops[dID] = true
-          end
-
-          local realID, realIDSource
-
-          -- Strategy A: positive match
-          for candidateID in pairs(capturedAuraIDs) do
-            if candidateID ~= id and not thisEventDrops[candidateID] then
-              local aOk, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", candidateID)
-              if aOk and aura then
-                local sIDOk, sID = pcall(function()
-                  local s = aura.spellId
-                  if type(s) ~= "number" then return nil end
-                  if issecretvalue and issecretvalue(s) then return nil end
-                  return s
-                end)
-                if sIDOk and sID and stateAuraIDs[sID] then
-                  realID, realIDSource = candidateID, "spellId match"
-                  break
-                end
-                if stateAuraName then
-                  local nOk, name = pcall(function()
-                    local x = aura.name
-                    if type(x) ~= "string" then return nil end
-                    if issecretvalue and issecretvalue(x) then return nil end
-                    return x
-                  end)
-                  if nOk and name == stateAuraName then
-                    realID, realIDSource = candidateID, "name match"
-                    break
-                  end
-                end
-              end
-            end
-          end
-
-          -- Strategy B: too-short-for-DR runtime fallback
-          if not realID and sinceCast < TOO_SHORT_FOR_DR then
-            for candidateID in pairs(capturedAuraIDs) do
-              if candidateID ~= id and not thisEventDrops[candidateID] then
-                realID = candidateID
-                realIDSource = string.format(
-                  "too-short-fallback (drop @ %.2fs < %ds)", sinceCast, TOO_SHORT_FOR_DR)
-                break
-              end
-            end
-          end
-
-          if realID then
-            Debug.Log("WATCHER",
-              "First-aura drop @ %.2fs — correcting firstCapturedID from %d to %d (%s)",
-              sinceCast, firstCapturedID, realID, realIDSource)
-            firstCapturedID = realID
-            -- Do NOT set triggerDropTime; trigger presumed still alive.
-          else
-            -- Strategy C: predicted-vs-observed sanity check.
-            -- If the observed drop is significantly later than the
-            -- predictive Animosity model expects, the tracked aura was
-            -- probably not Dragonrage — it was a longer-lived non-DR
-            -- buff (Light's Potential, trinket proc, etc.) that the
-            -- engine put at addedAuras[1] and that we couldn't identify
-            -- by spellId during combat. The cascade-too-short heuristic
-            -- (Strategy B) doesn't catch these because they outlive the
-            -- 13s window. Trust the predictive end instead.
-            --
-            -- Animosity is the only known DR extension mechanic in
-            -- 12.0, so predicted is an upper bound on real DR duration.
-            -- An observed > predicted + 5s means the tracked aura
-            -- definitively outlived DR. Without this override, the
-            -- linger model inflates stacks-at-drop and lingerDuration,
-            -- causing late-fire false positives on deferred (OOC)
-            -- alerts. Confirmed in a no-empower DR cycle 2026-05-01:
-            -- DR ended at +18s but tracked aura (Light's Potential) at
-            -- +30s, leading to alert firing at +38s on combat re-entry
-            -- when only 3 stacks ever existed.
-            local LATE_MARGIN = 5
-            local sourceTag
-            if expectedTriggerEnd
-               and sinceCast > (expectedTriggerEnd - castTime) + LATE_MARGIN then
-              triggerDropTime = expectedTriggerEnd
-              sourceTag = "predicted-override"
-              Debug.Log("WATCHER",
-                "Observed drop @ %.2fs significantly later than predicted %.2fs (empowers=%d) — using predicted as trigger end (likely tracked non-DR aura)",
-                sinceCast, expectedTriggerEnd - castTime, empowerCount)
-            else
-              triggerDropTime = now
-              sourceTag = "observed"
-              Debug.Log("WATCHER", "Trigger parent dropped after %.2fs (linger begins)", sinceCast)
-            end
-
-            -- Cycle-complete summary (always-on diagnostic). Compares
-            -- the predictive Animosity model against the tracked aura's
-            -- observed drop. Large deltas indicate either real DR was
-            -- cancelled early, or our firstCapturedID wasn't actually
-            -- DR (which would skew the linger model when deferred
-            -- alerts later resolve). The instance + sID helps identify
-            -- whether the tracked aura was DR or some longer/shorter
-            -- non-DR buff that should be added to the transient list
-            -- or otherwise filtered.
-            if expectedTriggerEnd then
-              local predictedSinceCast = expectedTriggerEnd - castTime
-              local observedSinceCast = triggerDropTime - castTime
-              local delta = observedSinceCast - predictedSinceCast
-              local meta = capturedAuraMeta[id]
-              local sIDStr = meta and tostring(meta.spellId) or "?"
-              Debug.Log("WATCHER",
-                "Cycle complete — predicted DR=%.2fs, observed=%.2fs (Δ=%+.2fs), empowers=%d, instance=%d sID=%s, source=%s",
-                predictedSinceCast, observedSinceCast, delta,
-                empowerCount, firstCapturedID, sIDStr, sourceTag)
-            end
-          end
+          Debug.Log("CAPTURE", "  +%.3fs drop instance=%d", sinceCast, id)
         end
       end
-    end
-
-    if sawCapturedRemoval and next(capturedAuraIDs) == nil and sinceCast > 0.1 then
-      -- Captured set typically only holds DR (RF first ticks at +6s,
-      -- outside our 1s capture window), so this fires when DR drops —
-      -- NOT when RF/Risen Fury actually expire. Don't auto-suppress
-      -- here: let the timer / combat-entry path evaluate via FireAlert's
-      -- linger-model gate, which knows about the Risen Fury phase.
-      Debug.Log("WATCHER", "Trigger parent removed from capture set @ %.2fs (linger model takes over)", sinceCast)
     end
   end
 end
@@ -936,13 +733,23 @@ function Watcher.GetState()
   stateView.alertFired         = alertFired
   stateView.alertPending       = alertPending
   stateView.alertSuppressed    = alertSuppressed
-  stateView.triggerDropTime    = triggerDropTime
+  -- triggerDropTime: derived from the predictive Animosity model. Reads
+  -- as nil while Dragonrage is predicted to still be active, and as the
+  -- predicted end timestamp once `now` has passed it. The overlay treats
+  -- non-nil triggerDropTime as "linger phase started," which lines up
+  -- with the new predicted-only design (we never observe a real drop in
+  -- combat — Rising Fury's fields are secret values).
+  local now = GetTime()
+  if castTime and expectedTriggerEnd and now >= expectedTriggerEnd then
+    stateView.triggerDropTime = expectedTriggerEnd
+  else
+    stateView.triggerDropTime = nil
+  end
   stateView.empowerCount       = empowerCount or 0
   stateView.expectedTriggerEnd = expectedTriggerEnd
   stateView.capturedTotal      = capturedTotal
   stateView.activeCount        = capturedTotal
   stateView.capturedIDs        = capturedAuraIDs
-  stateView.firstCapturedID    = firstCapturedID
   stateView.lastFiredTime      = lastFiredTime
   stateView.lastFiredOffset    = lastFiredOffset
   stateView.lastSuppressOffset = lastSuppressOffset
@@ -1002,13 +809,51 @@ watcherFrame:SetScript("OnEvent", function(_, event, ...)
     end
     if spellID == triggerID then
       OnTriggerCast()
-    elseif EMPOWER_SPELL_IDS[spellID] and castTime and not triggerDropTime then
+    elseif EMPOWER_SPELL_IDS[spellID] and castTime then
       -- Animosity extension. Counted on SUCCEEDED rather than _EMPOWER_STOP
-      -- so Tip-the-Scales instant empowers register too.
-      empowerCount = (empowerCount or 0) + 1
-      expectedTriggerEnd = ComputeExpectedTriggerEnd()
-      Debug.Log("WATCHER", "Empower #%d (%s, id=%d) — DR predicted to last %.2fs total",
-        empowerCount, EMPOWER_SPELL_IDS[spellID], spellID, expectedTriggerEnd - castTime)
+      -- so Tip-the-Scales instant empowers register too. Only count
+      -- empowers cast while Dragonrage is predicted to still be active —
+      -- empowers cast after the predicted end don't extend an inactive
+      -- DR (Animosity only extends an active DR), so they shouldn't
+      -- inflate the model. Without aura observation, the predictive
+      -- end is our best signal for "DR is still up."
+      --
+      -- We allow a small grace window (EMPOWER_LATENCY_GRACE) past the
+      -- predicted end so an empower truly cast within DR — but whose
+      -- SUCCEEDED event arrived client-side just after our predicted end
+      -- due to network latency — is still credited. See the constant
+      -- declaration for the lag-vs-false-positive tradeoff.
+      local predictedEnd = expectedTriggerEnd or (castTime + DR_BASE_DURATION)
+      local now = GetTime()
+      if now <= predictedEnd + EMPOWER_LATENCY_GRACE then
+        local oldEnd = expectedTriggerEnd
+        empowerCount = (empowerCount or 0) + 1
+        expectedTriggerEnd = ComputeExpectedTriggerEnd()
+        -- Show the per-empower extension delta. With Animosity, this is
+        -- 5×0.75^(N-1) for the Nth empower. Without Animosity, the delta
+        -- is 0.00s — making it visibly clear in the log that the empower
+        -- registered but didn't extend DR (the talent gate suppressed the
+        -- formula). This is the cleanest way to verify Animosity detection
+        -- end-to-end at cycle time.
+        local delta = expectedTriggerEnd - (oldEnd or expectedTriggerEnd)
+        local lateBy = now - predictedEnd
+        if lateBy > 0 and Config.Get(Config.Options.VERBOSE) then
+          Debug.Log("WATCHER",
+            "Empower #%d (%s, id=%d) — counted within %.2fs grace (%.2fs past predicted end). DR predicted to last %.2fs total (+%.2fs from this empower)",
+            empowerCount, EMPOWER_SPELL_IDS[spellID], spellID,
+            EMPOWER_LATENCY_GRACE, lateBy,
+            expectedTriggerEnd - castTime, delta)
+        else
+          Debug.Log("WATCHER",
+            "Empower #%d (%s, id=%d) — DR predicted to last %.2fs total (+%.2fs from this empower)",
+            empowerCount, EMPOWER_SPELL_IDS[spellID], spellID,
+            expectedTriggerEnd - castTime, delta)
+        end
+      elseif Config.Get(Config.Options.VERBOSE) then
+        Debug.Log("WATCHER",
+          "Empower id=%d cast %.2fs after predicted DR end — not counted (beyond %.2fs grace)",
+          spellID, now - predictedEnd, EMPOWER_LATENCY_GRACE)
+      end
     end
 
   elseif event == "UNIT_SPELLCAST_EMPOWER_STOP" then
@@ -1016,8 +861,11 @@ watcherFrame:SetScript("OnEvent", function(_, event, ...)
     -- successful path is handled in UNIT_SPELLCAST_SUCCEEDED above.
     -- args: unitTarget, castGUID, spellID, complete, interruptedBy, castBarID
     local _, _, empSpellID, complete = ...
-    if not complete and castTime and not triggerDropTime then
-      Debug.Log("WATCHER", "Empower id=%s cancelled — no extension", tostring(empSpellID))
+    if not complete and castTime then
+      local predictedEnd = expectedTriggerEnd or (castTime + DR_BASE_DURATION)
+      if GetTime() <= predictedEnd then
+        Debug.Log("WATCHER", "Empower id=%s cancelled — no extension", tostring(empSpellID))
+      end
     end
 
   elseif event == "UNIT_AURA" then

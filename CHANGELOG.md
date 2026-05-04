@@ -4,6 +4,17 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-04
+
+### Fixed
+
+- **Group buffs and combat potions no longer get mistaken for Dragonrage.** Rising Fury is a hidden aura in Midnight 12.0 — its stack count, name, and duration are all secret values during combat. ApexFury can't read it directly, so it used to look at every buff that landed on you within a second of Dragonrage and try to pick out which one was Rising Fury. That worked on a target dummy. In a real M+ pull, your Augmentation's Prescience and Ebon Might land in the same instant, your Mistweaver's Renewing Mist lands, your combat potion lands, Tip the Scales lands — and any of those can win the guess. When the addon picked the wrong one, it thought Dragonrage ended whenever THAT buff expired. Prescience expires at 19s, most combat potions at 30s, real Dragonrage with 4 empowers at 31.7s — and the misidentification poisoned the Risen Fury linger window used by deferred alerts (the ones that re-fire after vehicle/CC/out-of-combat).
+- The fix is to stop guessing. Rising Fury accumulates one stack every 6 seconds you're in Dragonrage, and Dragonrage's exact duration is a deterministic formula based on empower casts (Animosity adds 5 seconds per Fire Breath / Eternity Surge with diminishing returns). Empower casts come in over a public event channel that's not subject to the hidden-aura system, so the addon can count them precisely. ApexFury now drives every timing decision — when to fire, when to suppress as "trigger too short", how long the Risen Fury linger lasts — from that math instead of from an aura it can't reliably identify. There's no group-buff blacklist anymore because it doesn't need one; every buff other players cast on you is simply ignored.
+- **What you'll notice:** the 4-stack alert at +18s already worked for almost everyone — the alert fired before the misidentified buff could matter. What was broken was deferred alerts that resolved later. Press Dragonrage in a vehicle phase and the alert holds, then fires when you exit at +25s. Before, a misidentified 19s buff made the addon think your Risen Fury linger had only seconds left when you actually had the full 20-second window. That's correct now. **Threshold ≥5 alerts** that previously suppressed on cycles where a short non-DR buff was being tracked will now fire correctly.
+- **Without Animosity specced**, predicted Dragonrage duration is now correctly 18 seconds flat regardless of how many empowers you cast — Animosity is the only mechanic that extends it. Threshold ≥4 alerts still suppress automatically in this case (4 stacks of Rising Fury can't fit in 18 seconds), now via the predictive model rather than the previously-broken observed-aura path.
+- The verbose debug log's `[CAPTURE]` lines still emit for diagnostic use, but the per-cycle "predicted vs observed" comparison line is gone — there's no observed end time anymore, only the predicted one. The "linger expired" suppression reason is now spelled `linger_expired` (was `buff_dropped`) for clarity in the overlay's verdict line.
+- **High-latency M+ groups: empowers cast right at the end of Dragonrage no longer get silently dropped.** A Fire Breath or Eternity Surge release that the server applied while Dragonrage was still up can take 100-300ms (or rarely up to half a second) to make it back to your client as a cast-completion event. The previous build rejected anything past the predicted Dragonrage end with no slack, so a high-ping pull where you weave an Eternity Surge into the last second of Dragonrage could under-count empowers — the predictive model would then think your Dragonrage was shorter than it really was, and threshold ≥4 alerts on that cycle would suppress as "trigger too short" even though the buff actually ran long enough. ApexFury now allows a 0.5-second arrival grace, so empowers truly cast within Dragonrage but with their event landing client-side just after still get credited. The verbose debug log notes when the grace was used so you can see boundary cases.
+
 ## [0.3.0] - 2026-05-02
 
 ### Added
@@ -57,7 +68,8 @@ Initial release.
 
 - The CurseForge thumbnail occasionally lags an icon refresh after big patches. Not unique to this addon.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v0.1.0

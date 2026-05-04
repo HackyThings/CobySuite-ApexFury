@@ -18,6 +18,30 @@ CobySuite.Debug.Levels = {
 local Levels = CobySuite.Debug.Levels
 
 -------------------------------------------------------------------------------
+-- AppendConfigSnapshot — emits "Config Snapshot:" + sorted key=value pairs
+-- for every non-table entry in the named SavedVariable. Used by consumer
+-- addons' sessionHeader callbacks; consumers append their own extras after.
+-------------------------------------------------------------------------------
+function CobySuite.Debug.AppendConfigSnapshot(lines, svName)
+  table.insert(lines, "Config Snapshot:")
+  local sv = _G[svName]
+  if sv then
+    local parts = {}
+    for key, val in pairs(sv) do
+      if type(val) ~= "table" then
+        table.insert(parts, "  " .. tostring(key) .. "=" .. tostring(val))
+      end
+    end
+    table.sort(parts)
+    for _, p in ipairs(parts) do
+      table.insert(lines, p)
+    end
+  else
+    table.insert(lines, "  (not loaded)")
+  end
+end
+
+-------------------------------------------------------------------------------
 -- opts:
 --   addonName       (string)   "CobySniper" or "Linkepedia"
 --   categories      (table)    {"INIT", "CONFIG", ...}
@@ -193,10 +217,18 @@ function CobySuite.Debug.NewLogger(opts)
 
     table.insert(lines, "")
 
-    -- Iterate newest-first through ring buffer
+    -- Iterate newest-first through ring buffer.
+    -- writePos points to the slot AFTER the newest entry (the next slot to
+    -- write into), so the newest entry sits at writePos-1 in 1-indexed
+    -- terms — that's `(writePos - 0 - 2) % maxEntries + 1`. Subtracting
+    -- only -1 lands on writePos itself, which is the OLDEST slot in a
+    -- wrapped buffer (or a nil slot in a partial buffer, dropping the
+    -- oldest entry). The off-by-one corrupted Copy All / Copy Last 250
+    -- output even though the live debug window (GetFilteredEntries) was
+    -- fine.
     local count = 0
     for step = 0, bufferSize - 1 do
-      local idx = (writePos - step - 1) % maxEntries + 1
+      local idx = (writePos - step - 2) % maxEntries + 1
       local entry = buffer[idx]
       if entry then
         local levelOk = not levelFilters or levelFilters[entry.level]

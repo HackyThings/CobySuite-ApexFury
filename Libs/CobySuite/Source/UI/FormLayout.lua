@@ -207,9 +207,9 @@ end
 --   y          [Label "Foo (s)"]
 --   y - 16     [=========slider==========]   [valueText]
 --
--- Total advance: rowHeight + sliderRowExtra (default 16). The label
+-- Total advance: labelToSliderGap (default 16) + rowHeight. The label
 -- sits at labelX; the slider sits at labelX + 10 to align nicely with
--- the label baseline (matches Linkepedia's CreateSliderRow pattern).
+-- the label baseline.
 ---------------------------------------------------------------------------
 function FormLayout:Slider(opts)
   opts = opts or {}
@@ -264,8 +264,7 @@ function FormLayout:Dropdown(opts)
   if opts.initialValue ~= nil then dd:SetValue(opts.initialValue) end
   if opts.onChange then dd.onValueChanged = opts.onChange end
 
-  -- Dropdowns are taller than a standard row; default to 44 (matches
-  -- Linkepedia's CreateDropdownRow) but allow override.
+  -- Dropdowns are taller than a standard row; default to 44 but allow override.
   self.y = self.y - (opts.rowHeight or 44)
   self.lastWidget = dd
   return dd, self.y
