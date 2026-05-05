@@ -23,12 +23,17 @@
 --      Cast events are NOT subject to the private-aura system; spell IDs
 --      and unit tokens are always public.
 --   2. Schedule the alert at +(threshold - 1) * interval seconds.
---   3. Track empower casts via UNIT_SPELLCAST_SUCCEEDED for known empower
---      spell IDs (Fire Breath, Eternity Surge, plus their Font-of-Magic
---      variants). Each empower extends Dragonrage per the Animosity
---      formula (+5s × 0.75^N diminishing per cast). UNIT_SPELLCAST_SUCCEEDED
---      catches Tip-the-Scales instant releases too, which _EMPOWER_STOP
---      with complete=true does not.
+--   3. Track empower casts via the EMPOWER_START → EMPOWER_STOP channel
+--      lifecycle. EMPOWER_START sets an in-flight flag; the SUCCEEDED that
+--      follows is recognized as part of the channel and ignored. STOP
+--      complete=true counts the empower (channel landed during active DR —
+--      Animosity extends per the formula +5s × 0.75^N) and clears the flag.
+--      STOP complete=false just clears the flag (cancel — no extension,
+--      not counted). Tip-the-Scales instants fire neither START nor STOP,
+--      so their SUCCEEDED arrives with the flag clear and is the count
+--      signal in that path. Cancels never count because the model never
+--      speculatively increments on SUCCEEDED for channels — so there's
+--      no retract logic.
 --   4. Compute `expectedTriggerEnd = castTime + 18 + Σ 5 × 0.75^i` where
 --      i ranges over empowers cast so far. This is empirically accurate
 --      to ±0.05s on real-pull cycles. It's the source of truth for "when
@@ -77,6 +82,11 @@ local capturedAuraIDs       -- set: { [auraInstanceID] = true } — bookkeeping
                             -- for the overlay's OOC trigger-remaining read;
                             -- never used to identify Rising Fury.
 local empowerCount          -- empower casts observed since trigger cast
+local inFlightEmpower       -- spellID of an empower channel with EMPOWER_START
+                            -- seen but no STOP yet (nil = no channel in flight).
+                            -- Lets the SUCCEEDED handler distinguish "this is
+                            -- a TtS instant, count now" from "this is part of
+                            -- a channel, defer to STOP".
 local expectedTriggerEnd    -- predicted absolute time the trigger buff will
                             -- end. Drives every in-combat timing decision.
 local alertFired            -- bool: sound has been played
@@ -113,9 +123,12 @@ local THRESHOLD_BUFFER = 0.1
 local EMPOWER_LATENCY_GRACE = 0.5
 
 -- Empower spell IDs we track for Animosity duration extension. Counted
--- via UNIT_SPELLCAST_SUCCEEDED (not _EMPOWER_STOP) so Tip-the-Scales
--- instant releases register too — TtS-instant empowers don't fire
--- _EMPOWER_STOP with complete=true.
+-- on UNIT_SPELLCAST_EMPOWER_STOP with complete=true (channeled release
+-- landed during DR), or on UNIT_SPELLCAST_SUCCEEDED when no channel is
+-- in flight (Tip-the-Scales instant — fires neither START nor STOP).
+-- Cancels (STOP with complete=false) never count — the conservative
+-- model defers all counting until the channel resolves successfully,
+-- so there's nothing to undo on cancel.
 --
 -- Both base AND Font-of-Magic variants must be listed. Font of Magic is a
 -- Devastation talent (spell 411212) that overrides the action-bar spell IDs
@@ -148,6 +161,7 @@ local function ResetState()
   alertScheduledFor = nil
   capturedAuraIDs = {}
   empowerCount = 0
+  inFlightEmpower = nil
   expectedTriggerEnd = nil
   alertFired = false
   alertPending = false
@@ -575,6 +589,53 @@ local function OnAlertTimerExpired()
 end
 
 ---------------------------------------------------------------------------
+-- Increment empower count and recompute the predicted DR end. Called from
+-- two paths in the OnEvent handler:
+--   1. UNIT_SPELLCAST_EMPOWER_STOP with complete=true (channeled release).
+--   2. UNIT_SPELLCAST_SUCCEEDED for an empower spell when no channel is in
+--      flight (Tip-the-Scales instant — START/STOP don't fire for these).
+--
+-- Only counts empowers cast while DR is predicted to still be active (plus
+-- EMPOWER_LATENCY_GRACE for client-side event arrival lag). Empowers cast
+-- after the predicted end don't extend an inactive DR — Animosity only
+-- extends an ACTIVE DR — so they shouldn't inflate the model. Without aura
+-- observation the predictive end is our best signal for "DR is still up."
+---------------------------------------------------------------------------
+local function CountEmpower(spellID)
+  local predictedEnd = expectedTriggerEnd or (castTime + DR_BASE_DURATION)
+  local now = GetTime()
+  if now <= predictedEnd + EMPOWER_LATENCY_GRACE then
+    local oldEnd = expectedTriggerEnd
+    empowerCount = (empowerCount or 0) + 1
+    expectedTriggerEnd = ComputeExpectedTriggerEnd()
+    -- Show the per-empower extension delta. With Animosity, this is
+    -- 5×0.75^(N-1) for the Nth empower. Without Animosity, the delta
+    -- is 0.00s — making it visibly clear in the log that the empower
+    -- registered but didn't extend DR (the talent gate suppressed the
+    -- formula). This is the cleanest way to verify Animosity detection
+    -- end-to-end at cycle time.
+    local delta = expectedTriggerEnd - (oldEnd or expectedTriggerEnd)
+    local lateBy = now - predictedEnd
+    if lateBy > 0 and Config.Get(Config.Options.VERBOSE) then
+      Debug.Log("WATCHER",
+        "Empower #%d (%s, id=%d) — counted within %.2fs grace (%.2fs past predicted end). DR predicted to last %.2fs total (+%.2fs from this empower)",
+        empowerCount, EMPOWER_SPELL_IDS[spellID], spellID,
+        EMPOWER_LATENCY_GRACE, lateBy,
+        expectedTriggerEnd - castTime, delta)
+    else
+      Debug.Log("WATCHER",
+        "Empower #%d (%s, id=%d) — DR predicted to last %.2fs total (+%.2fs from this empower)",
+        empowerCount, EMPOWER_SPELL_IDS[spellID], spellID,
+        expectedTriggerEnd - castTime, delta)
+    end
+  elseif Config.Get(Config.Options.VERBOSE) then
+    Debug.Log("WATCHER",
+      "Empower id=%d cast %.2fs after predicted DR end — not counted (beyond %.2fs grace)",
+      spellID, now - predictedEnd, EMPOWER_LATENCY_GRACE)
+  end
+end
+
+---------------------------------------------------------------------------
 -- Trigger spell was cast — start a new tracking cycle
 ---------------------------------------------------------------------------
 local function OnTriggerCast()
@@ -810,62 +871,50 @@ watcherFrame:SetScript("OnEvent", function(_, event, ...)
     if spellID == triggerID then
       OnTriggerCast()
     elseif EMPOWER_SPELL_IDS[spellID] and castTime then
-      -- Animosity extension. Counted on SUCCEEDED rather than _EMPOWER_STOP
-      -- so Tip-the-Scales instant empowers register too. Only count
-      -- empowers cast while Dragonrage is predicted to still be active —
-      -- empowers cast after the predicted end don't extend an inactive
-      -- DR (Animosity only extends an active DR), so they shouldn't
-      -- inflate the model. Without aura observation, the predictive
-      -- end is our best signal for "DR is still up."
-      --
-      -- We allow a small grace window (EMPOWER_LATENCY_GRACE) past the
-      -- predicted end so an empower truly cast within DR — but whose
-      -- SUCCEEDED event arrived client-side just after our predicted end
-      -- due to network latency — is still credited. See the constant
-      -- declaration for the lag-vs-false-positive tradeoff.
-      local predictedEnd = expectedTriggerEnd or (castTime + DR_BASE_DURATION)
-      local now = GetTime()
-      if now <= predictedEnd + EMPOWER_LATENCY_GRACE then
-        local oldEnd = expectedTriggerEnd
-        empowerCount = (empowerCount or 0) + 1
-        expectedTriggerEnd = ComputeExpectedTriggerEnd()
-        -- Show the per-empower extension delta. With Animosity, this is
-        -- 5×0.75^(N-1) for the Nth empower. Without Animosity, the delta
-        -- is 0.00s — making it visibly clear in the log that the empower
-        -- registered but didn't extend DR (the talent gate suppressed the
-        -- formula). This is the cleanest way to verify Animosity detection
-        -- end-to-end at cycle time.
-        local delta = expectedTriggerEnd - (oldEnd or expectedTriggerEnd)
-        local lateBy = now - predictedEnd
-        if lateBy > 0 and Config.Get(Config.Options.VERBOSE) then
-          Debug.Log("WATCHER",
-            "Empower #%d (%s, id=%d) — counted within %.2fs grace (%.2fs past predicted end). DR predicted to last %.2fs total (+%.2fs from this empower)",
-            empowerCount, EMPOWER_SPELL_IDS[spellID], spellID,
-            EMPOWER_LATENCY_GRACE, lateBy,
-            expectedTriggerEnd - castTime, delta)
-        else
-          Debug.Log("WATCHER",
-            "Empower #%d (%s, id=%d) — DR predicted to last %.2fs total (+%.2fs from this empower)",
-            empowerCount, EMPOWER_SPELL_IDS[spellID], spellID,
-            expectedTriggerEnd - castTime, delta)
-        end
-      elseif Config.Get(Config.Options.VERBOSE) then
+      -- Conservative counting: a SUCCEEDED is a count signal only when no
+      -- channel is in flight for this empower (Tip-the-Scales instant).
+      -- For channels, SUCCEEDED is an interim event — the count happens
+      -- on STOP complete=true. Cancels (STOP complete=false) never count.
+      if inFlightEmpower ~= spellID then
+        CountEmpower(spellID)
+      end
+    end
+
+  elseif event == "UNIT_SPELLCAST_EMPOWER_START" then
+    -- A channel is starting. Mark in-flight so the SUCCEEDED that follows
+    -- is recognized as part of this channel (and ignored). The flag is
+    -- cleared at STOP regardless of complete value. Tip-the-Scales
+    -- instants don't fire START — that's exactly the discriminator.
+    local _, _, empSpellID = ...
+    if EMPOWER_SPELL_IDS[empSpellID] and castTime then
+      inFlightEmpower = empSpellID
+      if Config.Get(Config.Options.VERBOSE) then
         Debug.Log("WATCHER",
-          "Empower id=%d cast %.2fs after predicted DR end — not counted (beyond %.2fs grace)",
-          spellID, now - predictedEnd, EMPOWER_LATENCY_GRACE)
+          "EMPOWER_START fired @ +%.2fs — id=%d (%s) channel in flight",
+          GetTime() - castTime, empSpellID, EMPOWER_SPELL_IDS[empSpellID])
       end
     end
 
   elseif event == "UNIT_SPELLCAST_EMPOWER_STOP" then
-    -- We only care about cancellations here (informational log). The
-    -- successful path is handled in UNIT_SPELLCAST_SUCCEEDED above.
     -- args: unitTarget, castGUID, spellID, complete, interruptedBy, castBarID
+    --
+    -- Channel resolved. complete=true → count now (the empower landed
+    -- during active DR — Animosity extends; CountEmpower applies its own
+    -- latency-grace check to drop releases that arrived too late).
+    -- complete=false → cancelled, no count. The conservative model never
+    -- speculatively increments on SUCCEEDED, so cancels have nothing to
+    -- retract. Always clear the in-flight flag.
     local _, _, empSpellID, complete = ...
-    if not complete and castTime then
-      local predictedEnd = expectedTriggerEnd or (castTime + DR_BASE_DURATION)
-      if GetTime() <= predictedEnd then
-        Debug.Log("WATCHER", "Empower id=%s cancelled — no extension", tostring(empSpellID))
-      end
+    if not EMPOWER_SPELL_IDS[empSpellID] or not castTime then return end
+    Debug.Log("WATCHER",
+      "EMPOWER_STOP fired @ +%.2fs — id=%d (%s) complete=%s",
+      GetTime() - castTime, empSpellID, EMPOWER_SPELL_IDS[empSpellID],
+      tostring(complete))
+    if inFlightEmpower == empSpellID then
+      inFlightEmpower = nil
+    end
+    if complete then
+      CountEmpower(empSpellID)
     end
 
   elseif event == "UNIT_AURA" then
@@ -940,6 +989,7 @@ end)
 function Watcher.Activate()
   if active then return end
   watcherFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+  watcherFrame:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_START", "player")
   watcherFrame:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", "player")
   watcherFrame:RegisterUnitEvent("UNIT_AURA", "player")
   watcherFrame:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
@@ -957,6 +1007,7 @@ end
 function Watcher.Deactivate()
   if not active then return end
   watcherFrame:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+  watcherFrame:UnregisterEvent("UNIT_SPELLCAST_EMPOWER_START")
   watcherFrame:UnregisterEvent("UNIT_SPELLCAST_EMPOWER_STOP")
   watcherFrame:UnregisterEvent("UNIT_AURA")
   watcherFrame:UnregisterEvent("UNIT_EXITED_VEHICLE")

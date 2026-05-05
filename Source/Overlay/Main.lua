@@ -145,24 +145,34 @@ local function UpdateDisplay()
   -- Line 1: our timer / state
   if state.alertPending then
     local elapsed = state.castTime and (now - state.castTime) or 0
-    local reasonText
-    local r = state.pendingDeferReason
-    if r == "ooc" then
-      reasonText = "waiting for combat"
-    elseif r == "vehicle" or r == "vehicle_ui" then
-      reasonText = "in vehicle"
-    elseif r == "mounted" then
-      reasonText = "mounted"
-    elseif r == "possessed" then
-      reasonText = "possessed"
-    elseif r == "loss_of_control" then
-      reasonText = "stunned/CC'd"
+    -- Linger past its predicted end? The watcher's stale-pending cleanup
+    -- only fires at +45s after cast, so between actual linger expiry and
+    -- that cleanup the overlay would otherwise show a stale "PENDING."
+    local lingerRem = state.estLingerRemaining
+    if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
+      lines[1]:SetText(string.format(
+        "|cFFCCCCCCStatus:|r |cFF888888EXPIRED — RF/Risen Fury ended|r |cFF555555(%.1fs since cast)|r",
+        elapsed))
     else
-      reasonText = "waiting"
+      local reasonText
+      local r = state.pendingDeferReason
+      if r == "ooc" then
+        reasonText = "waiting for combat"
+      elseif r == "vehicle" or r == "vehicle_ui" then
+        reasonText = "in vehicle"
+      elseif r == "mounted" then
+        reasonText = "mounted"
+      elseif r == "possessed" then
+        reasonText = "possessed"
+      elseif r == "loss_of_control" then
+        reasonText = "stunned/CC'd"
+      else
+        reasonText = "waiting"
+      end
+      lines[1]:SetText(string.format(
+        "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING — %s|r |cFF555555(%.1fs since cast)|r",
+        reasonText, elapsed))
     end
-    lines[1]:SetText(string.format(
-      "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING — %s|r |cFF555555(%.1fs since cast)|r",
-      reasonText, elapsed))
   elseif state.castTime and state.alertScheduledFor and not state.alertFired and not state.alertSuppressed then
     local remaining = math.max(0, state.alertScheduledFor - now)
     lines[1]:SetText(string.format(
@@ -254,16 +264,22 @@ local function UpdateDisplay()
       "|cFFCCCCCCVerdict:|r |cFFFF8800SUPPRESSED|r |cFF555555(%s)|r",
       tostring(state.lastSuppressReason or "?")))
   elseif state.alertPending then
-    local r = state.pendingDeferReason
-    local detail = (r == "ooc" and "awaiting combat re-entry")
-                or (r == "vehicle" and "awaiting vehicle exit")
-                or (r == "vehicle_ui" and "awaiting vehicle exit")
-                or (r == "mounted" and "awaiting dismount")
-                or (r == "possessed" and "awaiting possession end")
-                or (r == "loss_of_control" and "awaiting CC end")
-                or "awaiting recovery"
-    lines[6]:SetText(string.format(
-      "|cFFCCCCCCVerdict:|r |cFFFFAA00deferred — %s|r", detail))
+    local lingerRem = state.estLingerRemaining
+    if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
+      lines[6]:SetText(
+        "|cFFCCCCCCVerdict:|r |cFF888888expired — RF/Risen Fury ended|r")
+    else
+      local r = state.pendingDeferReason
+      local detail = (r == "ooc" and "awaiting combat re-entry")
+                  or (r == "vehicle" and "awaiting vehicle exit")
+                  or (r == "vehicle_ui" and "awaiting vehicle exit")
+                  or (r == "mounted" and "awaiting dismount")
+                  or (r == "possessed" and "awaiting possession end")
+                  or (r == "loss_of_control" and "awaiting CC end")
+                  or "awaiting recovery"
+      lines[6]:SetText(string.format(
+        "|cFFCCCCCCVerdict:|r |cFFFFAA00deferred — %s|r", detail))
+    end
   else
     local Config = ApexFury.Config
     local interval    = Config.Get(Config.Options.STACK_INTERVAL)

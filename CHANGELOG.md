@@ -4,6 +4,13 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-05
+
+### Fixed
+
+- **Cancelled empowers no longer extend the predicted Dragonrage timer, even when cancelled after the alert has already fired.** If you started a Fire Breath or Eternity Surge channel during Dragonrage and then cancelled it before release, ApexFury was counting the empower as if Animosity had applied: predicted Dragonrage duration would jump by +5s / +3.75s / +2.81s / etc. per cancelled cast, even though Dragonrage was actually still on its base 18s in game. On cycles where you cancelled empowers (e.g. interrupted by movement, or deliberately holding for Tip the Scales), this would cause the +18s alert to fire against a buff that had already (or was about to) fall off, and the Risen Fury linger window for deferred alerts would be inflated by however much fake extension got applied. ApexFury now defers counting until the empower channel actually finishes. Animosity only credits a cast that completes while Dragonrage is still active, so this matches what the game does, meaning cancels never inflate the model regardless of when in the cycle they happen. Tip the Scales instants still count immediately, since they don't have a channel to wait on.
+- **Overlay no longer shows "PENDING" after Risen Fury has expired.** When you'd cast Dragonrage out of combat (or end up out of combat by the +18s alert moment), the alert correctly defers and waits for combat re-entry. But if you stayed out of combat past the end of the Risen Fury linger window, the overlay would keep showing its pending status with a "waiting for combat" reason, even though the trinket window had already ended and there was no longer anything to alert about. The cleanup that resolves stale defers only runs ~45 seconds after the Dragonrage cast, leaving a window of stale display. The overlay now detects when the predicted linger has run out and switches the status and verdict lines to an "expired" state with a "Risen Fury ended" reason instead.
+
 ## [0.4.0] - 2026-05-04
 
 ### Fixed
@@ -68,7 +75,8 @@ Initial release.
 
 - The CurseForge thumbnail occasionally lags an icon refresh after big patches. Not unique to this addon.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v0.1.0...v0.2.0
