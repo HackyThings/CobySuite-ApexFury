@@ -1,12 +1,10 @@
 ﻿-------------------------------------------------------------------------------
 -- ApexFury Overlay — movable on-screen status frame
 --
--- Shows live timer + watcher state for at-a-glance verification:
---   - Time until our scheduled alert fires
---   - How many captured auras are still alive
---   - Trigger buff's remaining time (read directly out of combat;
---     predictive model in combat — direct aura reads are taint-risky)
---   - Last alert outcome (fired / suppressed / —)
+-- Seven tooltipped status lines for live verification of the watcher's
+-- decision-making: status / DR remaining / empowers + projected stacks /
+-- fired-after offset / last-alert-ago / live verdict / talent gate.
+-- See LINE_TOOLTIPS below for per-line descriptions.
 --
 -- Position is persisted in APEX_FURY_UI_STATE.overlay.
 -------------------------------------------------------------------------------
@@ -30,6 +28,18 @@ local LINE_TOOLTIPS = {
 }
 
 local NUM_LINES = 7
+
+-- Defer-reason → user-facing text for both the status line (line 1) and the
+-- live verdict line (line 6). Single source so the two displays stay aligned.
+local DEFER_REASON_DISPLAY = {
+  ooc             = { status = "waiting for combat",  verdict = "awaiting combat re-entry" },
+  vehicle         = { status = "in vehicle",          verdict = "awaiting vehicle exit" },
+  vehicle_ui      = { status = "in vehicle",          verdict = "awaiting vehicle exit" },
+  mounted         = { status = "mounted",             verdict = "awaiting dismount" },
+  possessed       = { status = "possessed",           verdict = "awaiting possession end" },
+  loss_of_control = { status = "stunned/CC'd",        verdict = "awaiting CC end" },
+}
+local DEFER_FALLBACK = { status = "waiting", verdict = "awaiting recovery" }
 
 ---------------------------------------------------------------------------
 -- Best-effort read of an aura's remaining duration. expirationTime is
@@ -117,7 +127,6 @@ end
 -- and why it's not doing anything.
 ---------------------------------------------------------------------------
 local function RenderInactivePlaceholder(state)
-  local reason = state.gateReason or "unknown"
   local detail = state.gateDetail or "Inactive"
   lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF888888inactive|r")
   lines[2]:SetText("|cFF888888" .. detail .. "|r")
@@ -154,21 +163,7 @@ local function UpdateDisplay()
         "|cFFCCCCCCStatus:|r |cFF888888EXPIRED — RF/Risen Fury ended|r |cFF555555(%.1fs since cast)|r",
         elapsed))
     else
-      local reasonText
-      local r = state.pendingDeferReason
-      if r == "ooc" then
-        reasonText = "waiting for combat"
-      elseif r == "vehicle" or r == "vehicle_ui" then
-        reasonText = "in vehicle"
-      elseif r == "mounted" then
-        reasonText = "mounted"
-      elseif r == "possessed" then
-        reasonText = "possessed"
-      elseif r == "loss_of_control" then
-        reasonText = "stunned/CC'd"
-      else
-        reasonText = "waiting"
-      end
+      local reasonText = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).status
       lines[1]:SetText(string.format(
         "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING — %s|r |cFF555555(%.1fs since cast)|r",
         reasonText, elapsed))
@@ -269,14 +264,7 @@ local function UpdateDisplay()
       lines[6]:SetText(
         "|cFFCCCCCCVerdict:|r |cFF888888expired — RF/Risen Fury ended|r")
     else
-      local r = state.pendingDeferReason
-      local detail = (r == "ooc" and "awaiting combat re-entry")
-                  or (r == "vehicle" and "awaiting vehicle exit")
-                  or (r == "vehicle_ui" and "awaiting vehicle exit")
-                  or (r == "mounted" and "awaiting dismount")
-                  or (r == "possessed" and "awaiting possession end")
-                  or (r == "loss_of_control" and "awaiting CC end")
-                  or "awaiting recovery"
+      local detail = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).verdict
       lines[6]:SetText(string.format(
         "|cFFCCCCCCVerdict:|r |cFFFFAA00deferred — %s|r", detail))
     end
@@ -285,10 +273,10 @@ local function UpdateDisplay()
     local interval    = Config.Get(Config.Options.STACK_INTERVAL)
     local threshold   = Config.Get(Config.Options.THRESHOLD)
     local minRem      = Config.Get(Config.Options.MIN_REMAINING) or 0
-    local requiredDur = (threshold - 1) * interval + 0.1
+    local requiredDur = (threshold - 1) * interval + ApexFury.Watcher.THRESHOLD_BUFFER
     local actualDur   = state.triggerDropTime
                       and (state.triggerDropTime - state.castTime)
-                       or ((state.expectedTriggerEnd or (state.castTime + 18)) - state.castTime)
+                       or ((state.expectedTriggerEnd or (state.castTime + ApexFury.Watcher.DR_BASE_DURATION)) - state.castTime)
     local rem         = state.estLingerRemaining or math.huge
     local rfAlive     = (not state.triggerDropTime) or (rem > 0)
 
@@ -353,7 +341,7 @@ local function BuildFrame()
   local wbg = TC.WINDOW_BG
   solidBg:SetColorTexture(wbg[1], wbg[2], wbg[3], wbg[4])
 
-  f.TitleText:SetText("|cFF" .. ApexFury.BRAND_COLOR .. "ApexFury|r")
+  f.TitleText:SetText(ApexFury.WrapBrand("ApexFury"))
 
   -- BasicFrameTemplate exposes its close button as f.CloseButton; route it
   -- through Overlay.Hide so the SavedVariable visibility flag stays in sync.

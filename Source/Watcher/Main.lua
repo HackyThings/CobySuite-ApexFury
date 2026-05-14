@@ -95,7 +95,7 @@ local alertSuppressed       -- bool: alert was cancelled
 local lastFiredTime         -- last time alert actually played sound
 local lastFiredOffset       -- precise elapsed seconds from cast to fire
 local lastSuppressOffset    -- precise elapsed seconds from cast to suppression
-local lastSuppressReason    -- "linger_expired" / "rf_too_short" / "trigger_too_short" / "death" / "zone" / nil
+local lastSuppressReason    -- "linger_expired" / "rf_too_short" / "trigger_too_short" / "rf_expired" / "disabled" / "death" / "zone" / nil
 local pendingTimer          -- C_Timer ticker handle (or nil)
 local pendingDeferReason    -- "ooc" / "vehicle" / "vehicle_ui" / "mounted" / "possessed" / "loss_of_control"
 local pendingPollTimer      -- C_Timer.NewTicker handle while alertPending; resolves the deferral
@@ -153,6 +153,22 @@ local DR_BASE_DURATION       = 18
 local ANIMOSITY_EXTENSION    = 5
 local ANIMOSITY_DIMINISHING  = 0.75
 
+-- Exposed for the Overlay's verdict-line preview, which must mirror this
+-- module's CheckTriggerRanLongEnough / PredictedTriggerEnd math. Keeping
+-- the constants on the public module means a single edit here propagates
+-- to the overlay without cross-file drift.
+Watcher.THRESHOLD_BUFFER = THRESHOLD_BUFFER
+Watcher.DR_BASE_DURATION = DR_BASE_DURATION
+
+---------------------------------------------------------------------------
+-- Tiny helper: cancel a C_Timer handle if non-nil, return nil for the
+-- assign-back idiom. Usage: `pendingTimer = CancelTimer(pendingTimer)`.
+---------------------------------------------------------------------------
+local function CancelTimer(t)
+  if t then t:Cancel() end
+  return nil
+end
+
 ---------------------------------------------------------------------------
 -- Reset state
 ---------------------------------------------------------------------------
@@ -173,14 +189,8 @@ local function ResetState()
   -- separate "Last alert: Xs ago" display.
   lastFiredOffset = nil
   lastSuppressOffset = nil
-  if pendingTimer then
-    pendingTimer:Cancel()
-    pendingTimer = nil
-  end
-  if pendingPollTimer then
-    pendingPollTimer:Cancel()
-    pendingPollTimer = nil
-  end
+  pendingTimer = CancelTimer(pendingTimer)
+  pendingPollTimer = CancelTimer(pendingPollTimer)
   pendingDeferReason = nil
 end
 
@@ -199,8 +209,7 @@ local function ComputeExpectedTriggerEnd()
   if not castTime then return nil end
 
   local hasAnimosity = true
-  local gate = ApexFury.TalentGate and ApexFury.TalentGate.GetState
-               and ApexFury.TalentGate.GetState() or nil
+  local gate = ApexFury.GetTalentGate()
   if gate and gate.hasAnimosity == false then hasAnimosity = false end
 
   if not hasAnimosity then
@@ -235,9 +244,8 @@ end
 -- The "effective end" for stack accumulation is min(now, predictedEnd):
 -- during DR (now < predictedEnd) stacks grow with elapsed time; once DR
 -- has predicted-ended (now >= predictedEnd), stacks freeze at whatever
--- they reached when DR ended. This is the same shape as the previous
--- triggerDropTime-or-now code, but driven by the deterministic Animosity
--- formula instead of an aura observation we can't reliably make.
+-- they reached when DR ended. The deterministic Animosity formula is
+-- the authority here; we never observe the actual aura drop in combat.
 ---------------------------------------------------------------------------
 local function ComputeMaxStacksReached()
   if not castTime then return 0 end
@@ -301,8 +309,8 @@ local function PresumablyHasStacks()
 end
 
 ---------------------------------------------------------------------------
--- Fire the alert (sound + chat). Verifies the trigger context still holds
--- and that linger remaining meets the configured minimum.
+-- Fire the alert (sound). Verifies the trigger context still holds and
+-- that linger remaining meets the configured minimum.
 ---------------------------------------------------------------------------
 local function FireAlert(reasonContext)
   if alertFired or alertSuppressed then return end
@@ -315,6 +323,8 @@ local function FireAlert(reasonContext)
 
   if not Config.Get(Config.Options.ENABLED) then
     alertSuppressed = true
+    lastSuppressReason = "disabled"
+    if castTime then lastSuppressOffset = GetTime() - castTime end
     return
   end
 
@@ -389,7 +399,7 @@ local function FireAlert(reasonContext)
   local soundChannel = Config.Get(Config.Options.SOUND_CHANNEL)
   local handle, willPlay = ApexFury.Sound.Play(soundValue, soundChannel)
   if not (willPlay and handle) then
-    Debug.Log("WATCHER",
+    Debug.Warn("WATCHER",
       "Sound dispatch returned willPlay=%s handle=%s — retrying in 50ms (mixer likely saturated)",
       tostring(willPlay), tostring(handle))
     C_Timer.After(0.05, function()
@@ -397,7 +407,7 @@ local function FireAlert(reasonContext)
       if wp2 and h2 then
         Debug.Log("WATCHER", "Sound retry succeeded")
       else
-        Debug.Log("WATCHER",
+        Debug.Warn("WATCHER",
           "Sound retry also failed (willPlay=%s handle=%s) — alert was inaudible",
           tostring(wp2), tostring(h2))
       end
@@ -478,10 +488,7 @@ local function ScheduleStalePendingCleanup()
       alertSuppressed = true
       lastSuppressReason = "rf_expired"
       if castTime then lastSuppressOffset = GetTime() - castTime end
-      if pendingPollTimer then
-        pendingPollTimer:Cancel()
-        pendingPollTimer = nil
-      end
+      pendingPollTimer = CancelTimer(pendingPollTimer)
       Debug.Log("WATCHER", "Pending alert cleared — linger expired without recovery (last reason: %s)",
         tostring(pendingDeferReason or "?"))
       pendingDeferReason = nil
@@ -519,10 +526,7 @@ local function TryFirePending(reasonContext)
   end
 
   -- Both gates pass — fire. FireAlert may still suppress on linger gate.
-  if pendingPollTimer then
-    pendingPollTimer:Cancel()
-    pendingPollTimer = nil
-  end
+  pendingPollTimer = CancelTimer(pendingPollTimer)
   FireAlert(reasonContext)
 end
 
@@ -538,13 +542,12 @@ local function DeferAlert(reason)
   -- Polling fallback — 0.5s ticker that re-evaluates gates. Cancels
   -- itself when alert fires, suppresses, or castTime changes (cycle
   -- replaced). Caps the implicit per-tick work at ~1 function call.
-  if pendingPollTimer then pendingPollTimer:Cancel() end
+  pendingPollTimer = CancelTimer(pendingPollTimer)
   local snapshotCastTime = castTime
   pendingPollTimer = C_Timer.NewTicker(0.5, function()
     if castTime ~= snapshotCastTime
        or alertFired or alertSuppressed or not alertPending then
-      if pendingPollTimer then pendingPollTimer:Cancel() end
-      pendingPollTimer = nil
+      pendingPollTimer = CancelTimer(pendingPollTimer)
       return
     end
     TryFirePending("polling")
@@ -657,8 +660,7 @@ local function OnTriggerCast()
   -- (e.g. TalentGate hasn't finished initial evaluation, or read failure),
   -- threshold ≥4 alerts will deterministically suppress as trigger_too_short
   -- and this is the line that explains why.
-  local gate = ApexFury.TalentGate and ApexFury.TalentGate.GetState
-               and ApexFury.TalentGate.GetState() or nil
+  local gate = ApexFury.GetTalentGate()
   local predDur = expectedTriggerEnd and (expectedTriggerEnd - castTime) or 0
   Debug.Log("WATCHER",
     "Trigger cast — timer at +%.2fs (suppress unless DR >= %.2fs, hasAnimosity=%s, base predDR=%.2fs)",
@@ -668,9 +670,10 @@ local function OnTriggerCast()
   pendingTimer = C_Timer.NewTimer(delay, OnAlertTimerExpired)
 
   -- All timing decisions downstream consult `expectedTriggerEnd`, which
-  -- is updated by each empower cast (UNIT_SPELLCAST_SUCCEEDED). We never
-  -- observe the actual Rising Fury aura drop — its fields are secret
-  -- values in combat — and don't try to.
+  -- is updated by each counted empower (EMPOWER_STOP complete=true for
+  -- channels, or SUCCEEDED for Tip-the-Scales instants). We never observe
+  -- the actual Rising Fury aura drop — its fields are secret values in
+  -- combat — and don't try to.
 end
 
 ---------------------------------------------------------------------------
@@ -784,11 +787,6 @@ end
 local stateView = {}
 
 function Watcher.GetState()
-  -- activeCount and capturedTotal both derive from capturedAuraIDs
-  -- (maintained via UNIT_AURA's removedAuraInstanceIDs payload).
-  local capturedTotal = 0
-  for _ in pairs(capturedAuraIDs or {}) do capturedTotal = capturedTotal + 1 end
-
   stateView.castTime           = castTime
   stateView.alertScheduledFor  = alertScheduledFor
   stateView.alertFired         = alertFired
@@ -808,8 +806,6 @@ function Watcher.GetState()
   end
   stateView.empowerCount       = empowerCount or 0
   stateView.expectedTriggerEnd = expectedTriggerEnd
-  stateView.capturedTotal      = capturedTotal
-  stateView.activeCount        = capturedTotal
   stateView.capturedIDs        = capturedAuraIDs
   stateView.lastFiredTime      = lastFiredTime
   stateView.lastFiredOffset    = lastFiredOffset
@@ -821,24 +817,20 @@ function Watcher.GetState()
 
   -- TalentGate status — surfaced here so the overlay can render a single
   -- combined view without coupling Overlay → TalentGate directly.
-  local gate = ApexFury.TalentGate and ApexFury.TalentGate.GetState
-               and ApexFury.TalentGate.GetState() or nil
+  local gate = ApexFury.GetTalentGate()
   if gate then
     stateView.gateUsable       = gate.usable
     stateView.gateReason       = gate.reason
     stateView.gateDetail       = gate.detail
     stateView.gateRisingFury   = gate.risingFuryRank
-    stateView.gateAnimosity    = gate.hasAnimosity
-    stateView.gateApiAvailable = gate.apiAvailable
-    stateView.gateIsDevo       = gate.isDevastation
   else
     -- TalentGate not yet started — assume usable so the overlay shows
     -- normal state during the brief startup window.
     stateView.gateUsable       = true
     stateView.gateReason       = "ready"
     stateView.gateDetail       = "Initializing..."
+    stateView.gateRisingFury   = nil
   end
-  stateView.watcherActive = active
 
   return stateView
 end
@@ -955,10 +947,8 @@ watcherFrame:SetScript("OnEvent", function(_, event, ...)
       alertPending = false
       lastSuppressReason = "death"
       lastSuppressOffset = GetTime() - castTime
-      if pendingTimer then
-        pendingTimer:Cancel()
-        pendingTimer = nil
-      end
+      pendingTimer = CancelTimer(pendingTimer)
+      pendingPollTimer = CancelTimer(pendingPollTimer)
     end
 
   elseif event == "PLAYER_LEAVING_WORLD" then
@@ -968,10 +958,8 @@ watcherFrame:SetScript("OnEvent", function(_, event, ...)
       alertPending = false
       lastSuppressReason = "zone"
       lastSuppressOffset = GetTime() - castTime
-      if pendingTimer then
-        pendingTimer:Cancel()
-        pendingTimer = nil
-      end
+      pendingTimer = CancelTimer(pendingTimer)
+      pendingPollTimer = CancelTimer(pendingPollTimer)
     end
 
   elseif event == "PLAYER_ENTERING_WORLD" then

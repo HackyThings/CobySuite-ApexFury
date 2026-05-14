@@ -28,7 +28,7 @@ local CommitSound
 -- bag-use path (UseContainerItem → ContainerFrameItemButton_OnClick)
 -- reads StaticPopupDialogs internally and inherits the taint, producing
 -- ADDON_ACTION_FORBIDDEN cascades on right-click. We use our own custom
--- dialog frame (built lazily, see ConfirmReplaceLTS below).
+-- dialog frame (built lazily, see ShowReplaceLTSConfirm below).
 
 -- Form (left pane) dimensions
 local FORM_W   = 480
@@ -166,7 +166,7 @@ local function BuildFrame()
   local wbg = TC.WINDOW_BG
   solidBg:SetColorTexture(wbg[1], wbg[2], wbg[3], wbg[4])
 
-  f.TitleText:SetText("|cFF" .. ApexFury.BRAND_COLOR .. "ApexFury|r — Settings")
+  f.TitleText:SetText(ApexFury.WrapBrand("ApexFury") .. " — Settings")
 
   f:SetScript("OnDragStart", function(self) self:StartMoving() end)
   f:SetScript("OnDragStop", function(self)
@@ -174,14 +174,21 @@ local function BuildFrame()
     SaveState()
   end)
   f:SetScript("OnShow", Refresh)
-  f:SetScript("OnKeyDown", function(self, key)
-    if key == "ESCAPE" then
-      self:SetPropagateKeyboardInput(false)
-      self:Hide()
-    else
-      self:SetPropagateKeyboardInput(true)
-    end
-  end)
+
+  -- ESC closes the window via Blizzard's UI panel manager. The previous
+  -- OnKeyDown + SetPropagateKeyboardInput pattern fired ADDON_ACTION_BLOCKED
+  -- on every keystroke (e.g. spell hotkeys) while the window was open in
+  -- combat, because SetPropagateKeyboardInput is a protected function.
+  -- UISpecialFrames is the standard non-protected path. See root CLAUDE.md
+  -- "Midnight 12.0 Taint Pitfalls" §4.
+  tinsert(UISpecialFrames, "ApexFuryOptionsWindow")
+
+  -- BasicFrameTemplate's default close button routes through HideUIPanel,
+  -- which silently no-ops in combat. Override to a plain :Hide() so the X
+  -- works regardless of combat state. (Overlay/Main.lua uses the same pattern.)
+  if f.CloseButton then
+    f.CloseButton:SetScript("OnClick", function() f:Hide() end)
+  end
 
   -- ───────────────────────────────────────────────────
   -- Form (left pane) and Browser (right pane) frames
@@ -369,7 +376,7 @@ local function BuildFrame()
       "The sound that will play when the threshold is reached. Pick a different one in the browser on the right.",
       "ANCHOR_RIGHT")
 
-    local btnTest = UI.CreateIconButton(parent, {
+    UI.CreateIconButton(parent, {
       size        = 22,
       texture     = "Interface\\COMMON\\VoiceChat-Speaker",
       vertexColor = { 0.7, 0.9, 1.0 },
@@ -468,8 +475,8 @@ local function BuildFrame()
     dd:SetPoint("TOPLEFT", parent, "TOPLEFT", INPUT_X - 6, y + 27)
     dd.DropDown:SetSize(160, 26)
     dd:InitAgain(
-      { "Dialog", "Master", "SFX" },
-      { "Dialog", "Master", "SFX" },
+      ApexFury.SOUND_CHANNELS,
+      ApexFury.SOUND_CHANNELS,
       {
         "Recommended. Nearly empty bus during combat — best chance of being heard. Uses your Dialog Volume slider.",
         "Routes alongside DBM-style critical alerts. Can be masked by simultaneous combat sounds.",

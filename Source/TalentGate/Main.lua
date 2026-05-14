@@ -312,7 +312,7 @@ end
 local function ApplyActivation()
   local W = ApexFury.Watcher
   if not (W and W.Activate and W.Deactivate) then
-    Debug.Log("TALENTGATE", "Watcher.Activate/Deactivate unavailable — skipping activation")
+    Debug.Warn("TALENTGATE", "Watcher.Activate/Deactivate unavailable — skipping activation")
     return
   end
 

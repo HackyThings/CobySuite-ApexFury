@@ -14,10 +14,39 @@ local ADDON_NAME = "ApexFury"
 local VERSION = C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.1.0"
 
 -------------------------------------------------------------------------------
+-- Shared branding + namespace helpers
+-------------------------------------------------------------------------------
+local BRAND_OPEN = "|cFF" .. ApexFury.BRAND_COLOR
+local BRAND_CLOSE = "|r"
+
+-- Wrap text in the addon's brand color for chat output and window titles.
+function ApexFury.WrapBrand(text)
+  return BRAND_OPEN .. text .. BRAND_CLOSE
+end
+
+-- Defensive read of TalentGate state. Returns the current state table, or
+-- nil if TalentGate hasn't loaded / been started yet (shouldn't happen
+-- post-PLAYER_LOGIN given TOC order, but callers stay safe either way).
+function ApexFury.GetTalentGate()
+  return ApexFury.TalentGate
+     and ApexFury.TalentGate.GetState
+     and ApexFury.TalentGate.GetState()
+      or nil
+end
+
+-- Audio channels accepted by ApexFury.Sound.Play. Listed in user-preference
+-- order — "Dialog" is the default for in-combat audibility.
+ApexFury.SOUND_CHANNELS = { "Dialog", "Master", "SFX" }
+ApexFury.SOUND_CHANNEL_ALIASES = {
+  dialog = "Dialog", master = "Master", sfx = "SFX",
+}
+
+-------------------------------------------------------------------------------
 -- Chat output (branded prefix)
 -------------------------------------------------------------------------------
+local BRAND_CHAT_PREFIX = ApexFury.WrapBrand("[ApexFury]") .. " "
 local function Message(text)
-  print("|cFF" .. ApexFury.BRAND_COLOR .. "[ApexFury]|r " .. text)
+  print(BRAND_CHAT_PREFIX .. text)
 end
 ApexFury.Message = Message
 
@@ -50,10 +79,9 @@ local function PrintStatus()
   local soundID = Config.Get(Config.Options.SOUND_ID)
   local enabled = Config.Get(Config.Options.ENABLED)
   local fireDelay = math.max(0, (threshold - 1) * interval)
-  local minDuration = fireDelay + 0.1  -- THRESHOLD_BUFFER (mirrors Watcher)
+  local minDuration = fireDelay + ApexFury.Watcher.THRESHOLD_BUFFER
 
-  local gate = ApexFury.TalentGate and ApexFury.TalentGate.GetState
-               and ApexFury.TalentGate.GetState() or nil
+  local gate = ApexFury.GetTalentGate()
 
   Message("Status:")
   if gate then
@@ -109,7 +137,7 @@ local function HandleSlashCommand(input)
     local filter = rest and rest:lower():trim() or ""
     Message(filter == "" and "Active player buffs:" or ("Active player buffs matching '" .. filter .. "':"))
     local matched, hidden = 0, 0
-    for i = 1, 40 do
+    for i = 1, BUFF_MAX_DISPLAY do
       local a = C_UnitAuras.GetBuffDataByIndex("player", i)
       if a then
         local ok, isMatch = pcall(function()
@@ -138,13 +166,13 @@ local function HandleSlashCommand(input)
 
   elseif cmd == "channel" then
     local arg = (rest or ""):lower():trim()
-    local CHANNEL_MAP = { dialog = "Dialog", master = "Master", sfx = "SFX" }
     if arg == "" then
       local cur = Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog"
       Message(string.format("Audio channel: |cFFFFFFFF%s|r. Use |cFFFFFFFF/af channel dialog|master|sfx|r to change.", cur))
-    elseif CHANNEL_MAP[arg] then
-      Config.Set(Config.Options.SOUND_CHANNEL, CHANNEL_MAP[arg])
-      Message("Audio channel set to |cFFFFFFFF" .. CHANNEL_MAP[arg] .. "|r.")
+    elseif ApexFury.SOUND_CHANNEL_ALIASES[arg] then
+      local channel = ApexFury.SOUND_CHANNEL_ALIASES[arg]
+      Config.Set(Config.Options.SOUND_CHANNEL, channel)
+      Message("Audio channel set to |cFFFFFFFF" .. channel .. "|r.")
     else
       Message("Unknown channel '" .. arg .. "'. Valid: |cFFFFFFFFdialog|master|sfx|r.")
     end

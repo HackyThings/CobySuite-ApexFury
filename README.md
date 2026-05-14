@@ -10,18 +10,16 @@ If you've ever popped Dragonrage, mashed your trinkets early, then realized your
 
 ## The Problem
 
-In Midnight 12.0, Blizzard hid most class buffs from addons during combat — including Rising Fury. The stack count comes back as a "secret value" that addons can't safely read; touching it triggers UI errors (PlayerFrame breaks, the Escape key stops closing menus). The old fallback — watching the combat log — was also disabled for addons in 12.0.
+In Midnight 12.0, Blizzard hid Rising Fury from addons. Reading the stack count directly causes UI errors, and the usual combat-log workaround was also disabled.
 
-Rising Fury is brand new in 12.0, so every stack tracker is starting from scratch under these rules.
-
-ApexFury sidesteps the problem. It never reads your stack count. Instead it watches the things Blizzard still lets addons see — your Dragonrage cast, your Fire Breath / Eternity Surge casts, and the Animosity timing — and plays the sound the exact moment your 4th stack lands.
+ApexFury never tries to read your stacks. It tracks your Dragonrage cast, your empowers, and the Animosity timing, then plays the sound the exact moment your 4th stack would land.
 
 ## How It Works
 
 1. **You cast Dragonrage.** ApexFury starts a timer for when the 4th stack will land. With default settings (Rising Fury ticks every 6s, threshold 4), that's 18 seconds from your cast.
-2. **You cast empowers (Fire Breath / Eternity Surge) inside Dragonrage.** Each one extends Dragonrage via Animosity. The first cast adds the full 5 seconds; each later cast contributes 25% less than the one before (5s, 3.75s, 2.81s, 2.11s, 1.58s for casts 1 through 5). ApexFury tracks your empowers and updates the timer to match.
+2. **You cast empowers (Fire Breath / Eternity Surge) inside Dragonrage.** Each one extends Dragonrage via Animosity. ApexFury tracks them and updates its timer to match.
 3. **At the 4th-stack moment, the sound plays.**
-4. **If Dragonrage finishes while you're out of combat** (e.g. between dungeon pulls), the alert holds. It plays the instant you re-enter combat — as long as your Risen Fury linger window is still alive. If the linger has already dropped below your minimum-remaining setting, it cancels cleanly instead of firing late.
+4. **If Dragonrage finishes while you're out of combat** (between pulls in a dungeon, for instance), the alert holds and plays the instant you re-enter combat, as long as your Risen Fury linger is still alive. If the linger has already dropped below your minimum-remaining setting, the alert cancels cleanly instead of firing late.
 
 ## Prerequisites
 
@@ -29,7 +27,7 @@ ApexFury checks your class, spec, and talents at login and any time you change t
 
 | What you need | Why |
 |---|---|
-| **Devastation Evoker** | Dragonrage only exists on Devastation. On other specs/classes the addon shuts off completely — no background work, no cost. |
+| **Devastation Evoker** | Dragonrage only exists on Devastation. On other specs and classes the addon shuts off completely. No background work, no cost. |
 | **Rising Fury talent (rank 1+)** | Without it, the buff this addon tracks doesn't exist at all. The addon stays off. |
 | **Animosity** | Without Animosity, Dragonrage stays at 18 seconds and you only ever get 3 stacks. The 4-stack alert is mathematically impossible. Drop your threshold to 3 if you don't run Animosity. |
 | **Rising Fury rank 3** (recommended) | Rank 3 unlocks Risen Fury, the linger phase that keeps your stacks alive after Dragonrage drops. Without rank 3, alerts only fire during Dragonrage itself, not in the post-DR window. |
@@ -37,9 +35,9 @@ ApexFury checks your class, spec, and talents at login and any time you change t
 Edge cases it handles:
 
 - **Tip the Scales empowers.** Instant-release empowers go through a different game event than channeled ones. ApexFury watches the right event so they all count toward Animosity.
-- **Trinket procs that land alongside Dragonrage.** ApexFury verifies which buff is actually Dragonrage so a trinket dropping early doesn't make the tracker think your DR ended.
+- **Trinket procs that land alongside Dragonrage.** ApexFury keeps the right cycle in view so a trinket dropping early doesn't throw off the tracker.
 - **Risen Fury linger after Dragonrage ends.** Won't alert if your stacks have already faded below your minimum-remaining setting.
-- **Vehicles, mounts, possession, stuns/CC.** The optional actionability gate (on by default) holds the alert when you can't act on it, then plays it the instant you regain control — as long as your Risen Fury linger window is still alive. Covers raid vehicle mechanics, skyriding combat mounts (Dimensius P2, Amirdrassil flying phase), boss mind-control, and stun/fear/silence/etc. Toggle off in the options if you want the sound regardless of player state.
+- **Vehicles, mounts, possession, stuns and CC.** The optional actionability gate (on by default) holds the alert when you can't act on it, then plays it the instant you regain control, as long as your Risen Fury linger is still alive. Covers raid vehicle mechanics, skyriding combat mounts (Dimensius P2, Amirdrassil flying phase), boss mind-control, and stun, fear, silence, etc. Toggle off in the options if you want the sound regardless of player state.
 
 ## Install
 
@@ -50,14 +48,15 @@ Edge cases it handles:
 ## Slash Commands
 
 ```
-/af               Open settings window
-/af help          Command list
-/af status        Print current settings to chat
-/af scan [name]   List active player buffs (find spell IDs)
-/af overlay       Toggle on-screen status frame
-/af debug         Toggle debug log window
-/af reset         Restore defaults
-/af version       Print version
+/af                                Open settings window
+/af help                           Command list
+/af status                         Print current settings to chat
+/af scan [name]                    List active player buffs (find spell IDs)
+/af overlay                        Toggle on-screen status frame
+/af debug                          Toggle debug log window
+/af channel [dialog|master|sfx]    Show or change the audio channel
+/af reset                          Restore defaults
+/af version                        Print version
 ```
 
 `/apex` and `/apexfury` are aliases for `/af`.
@@ -69,18 +68,20 @@ Open with `/af`. Two panes: form on the left, sound browser on the right.
 **Behavior**
 - Alerting enabled (master switch)
 - Combat-only mode (defer alerts that would fire out of combat)
-- Actionability gate (defer alerts while in vehicle / mounted / possessed / CC'd; re-fires on recovery)
-- Verbose debug logging (records every cast, empower, and buff change to the debug window — useful for bug reports)
+- Actionability gate (defer alerts while in vehicle, mounted, possessed, or stunned/CC'd; re-fires on recovery)
+- Verbose debug logging (records every cast, empower, and buff change to the debug window. Useful for bug reports.)
 
 **Trigger**
 - Trigger spell ID (default 375087 = Dragonrage)
 - Threshold (default 4 stacks)
-- Stack interval (default 6s — how often Rising Fury ticks during Dragonrage)
-- Min linger remaining (default 2s — held alerts cancel if your Risen Fury linger drops below this)
+- Stack interval (default 6s. How often Rising Fury ticks during Dragonrage.)
+- Min linger remaining (default 2s. Held alerts cancel if your Risen Fury linger drops below this.)
 
 **Sound**
 
 Type to search. Filter by source. Click any row to set it. Speaker icon next to "Selected" tests playback.
+
+The audio channel dropdown picks which WoW mix bus the alert plays on. Dialog is the default (nearly empty in combat, best chance to be heard). Master and SFX are also available if you'd rather route through those.
 
 ## Library Support
 
@@ -98,12 +99,12 @@ The more libraries you have installed, the bigger the catalog. Default sound is 
 
 `/af overlay` toggles a movable on-screen status window. Seven lines, each with a hover tooltip:
 
-1. **Status.** What the addon is doing right now: idle, counting down, fired, suppressed, or holding (waiting for combat / vehicle exit / etc).
-2. **DR remaining.** Time left on Dragonrage. Read directly from your buff out of combat, estimated from your cast + empower count in combat (Blizzard hides the buff timer in combat).
+1. **Status.** What the addon is doing right now: idle, counting down, fired, suppressed, or holding (waiting for combat, vehicle exit, etc).
+2. **DR remaining.** Time left on Dragonrage. Estimated in combat (Blizzard hides the buff timer there) and read directly out of combat.
 3. **Empowers cast + projected stacks at DR drop.** How many empowers you've used this Dragonrage and how many Rising Fury stacks you'll end up with. Also shows whether you're in combat.
 4. **Fired after.** Exact seconds from your Dragonrage cast to the moment the sound played. Frozen once the cycle resolves.
 5. **Last alert.** How long ago the last sound played.
-6. **Verdict.** What ApexFury would do if your 4th stack landed RIGHT NOW — fire, hold, or cancel. Useful for understanding why an alert didn't go off.
+6. **Verdict.** What ApexFury would do if your 4th stack landed right now: fire, hold, or cancel. Useful for understanding why an alert didn't go off.
 7. **Talent gate.** Whether your spec, Rising Fury rank, and Animosity are good. Tells you why the addon is inactive if it is.
 
 Useful for sanity checks and bug reports. Hide it when you don't need it.
@@ -115,11 +116,12 @@ Useful for sanity checks and bug reports. Hide it when you don't need it.
 - `/af status`. If `Enabled: no`, flip it on in `/af`.
 - If `Combat-only: yes` and you're testing on a target dummy, make sure you actually pulled it (auto-attack on, or just hit it once).
 - Hit the speaker icon next to "Selected" in `/af`. If silent there too, your selected sound file is missing (probably an LSM pack you uninstalled, or a Leatrix sound after Leatrix went away). Pick a different one.
+- Still nothing? Try `/af channel master`. The default Dialog channel uses your Dialog Volume slider in WoW's audio settings, so if that's down to zero you won't hear alerts.
 
 **Alert is firing too late or too early.**
 
-- Open the overlay (`/af overlay`). The "Verdict" line tells you what ApexFury would do right now and why — useful for spotting which condition is misbehaving.
-- Verbose mode (`/af` → Verbose debug logging) writes every cast and buff event to the debug window. `/af debug` opens it.
+- Open the overlay (`/af overlay`). The "Verdict" line tells you what ApexFury would do right now and why. Useful for spotting which condition is misbehaving.
+- Verbose mode (`/af` then check Verbose debug logging) writes every cast and buff event to the debug window. `/af debug` opens it.
 
 **It says my spell ID is unknown.**
 
@@ -142,8 +144,6 @@ For bug reports, the cleanest path is the debug log. It's self-contained: it inc
 
 **Other channels:**
 
-- **BugSack errors:** whisper the report straight to **Figment-Illidan** in-game; BugSack copies the stack trace for you. Mention how to reproduce if you can.
+- **BugSack errors:** whisper the report straight to **Figment-Illidan** in-game. BugSack copies the stack trace for you. Mention how to reproduce if you can.
 - **CurseForge comments:** drop a note on the [project page](https://www.curseforge.com/wow/addons/apexfury). Best for general feedback and quick questions.
 - **GitHub issues:** [open one here](https://github.com/HackyThings/CobySuite-ApexFury/issues). Best for reproducible bugs and feature proposals where back-and-forth helps. Attach the debug-log paste here too if it's relevant.
-
-If you don't see a `Verbose debug logging` checkbox: open `/af` and look at the **Behavior** section at the top of the form. Toggling it on takes effect immediately and persists across sessions. The debug window itself is `/af debug` from anywhere.
