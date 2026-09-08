@@ -506,8 +506,10 @@ function UI.BuildCheckboxMenu(menuRoot, items, isChecked, setChecked, onChange)
             setChecked(other.key, other.key == item.key)
           end
           if onChange then onChange() end
-          if MenuUtil and MenuUtil.HideMenu then
-            MenuUtil.HideMenu()
+          -- MenuUtil.HideMenu has never existed in the 11.x/12.x menu system;
+          -- the menu manager owns open menus.
+          if Menu and Menu.GetManager then
+            Menu.GetManager():CloseMenus()
           end
         elseif originalOnClick then
           originalOnClick(btn, mouseButton, ...)

@@ -244,9 +244,12 @@ local function ReadState()
   end
 
   -- Spec detection. Returns nil for sub-spec-unlock characters.
-  local specIndex = GetSpecialization()
+  -- C_SpecializationInfo is the current API; the bare GetSpecialization /
+  -- GetSpecializationInfo globals have been deprecated since 11.2.0 and
+  -- only survive through Blizzard's compatibility shim.
+  local specIndex = C_SpecializationInfo.GetSpecialization()
   if specIndex then
-    local specID = GetSpecializationInfo(specIndex)
+    local specID = C_SpecializationInfo.GetSpecializationInfo(specIndex)
     s.specID = specID
     s.isDevastation = (specID == DEVASTATION_SPEC_ID)
   end
@@ -429,10 +432,10 @@ local function EmitTransition(prev, next, isInitial)
         string.format("(rank %d).", next.risingFuryRank))
     elseif next.risingFuryRank < 3 and prev.risingFuryRank == 3 then
       Warn("Rising Fury rank reduced",
-        "— alerts still fire during Dragonrage. Risen Fury post-DR linger phase requires rank 3.")
+        "— alerts still fire during Dragonrage. The post-Dragonrage Rising Fury linger requires rank 3.")
     elseif next.risingFuryRank == 3 and prev.risingFuryRank < 3 then
       Good("Rising Fury at max rank",
-        "— Risen Fury post-DR linger phase active.")
+        "— post-Dragonrage Rising Fury linger active (4s per stack).")
     end
   end
 

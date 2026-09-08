@@ -136,9 +136,15 @@ local function HandleSlashCommand(input)
   elseif cmd == "scan" then
     local filter = rest and rest:lower():trim() or ""
     Message(filter == "" and "Active player buffs:" or ("Active player buffs matching '" .. filter .. "':"))
-    local matched, hidden = 0, 0
+    local matched, hidden, restricted = 0, 0, false
     for i = 1, BUFF_MAX_DISPLAY do
-      local a = C_UnitAuras.GetBuffDataByIndex("player", i)
+      -- 12.1: index-based aura reads Lua-error for addons while auras are
+      -- secret (combat, encounters, M+, PvP). Catch it and say so instead.
+      local readOk, a = pcall(C_UnitAuras.GetBuffDataByIndex, "player", i)
+      if not readOk then
+        restricted = true
+        break
+      end
       if a then
         local ok, isMatch = pcall(function()
           local name = a.name
@@ -158,7 +164,9 @@ local function HandleSlashCommand(input)
         end
       end
     end
-    if matched == 0 and hidden == 0 then
+    if restricted then
+      Message("  |cFFFF8800Aura data is hidden right now (combat, encounter, Mythic+, or PvP). Try again outside.|r")
+    elseif matched == 0 and hidden == 0 then
       Message("  (no matching buffs)")
     elseif hidden > 0 then
       Message(string.format("  |cFF888888(%d private aura(s) skipped)|r", hidden))

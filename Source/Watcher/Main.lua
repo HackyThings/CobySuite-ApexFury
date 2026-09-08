@@ -48,7 +48,7 @@
 --   6. On combat re-entry / vehicle exit / CC end / mount change with a
 --      pending alert, re-evaluate. The linger gate uses the predictive
 --      end as the "drop time" — once `now > expectedTriggerEnd`, we're in
---      the Risen Fury linger phase, expiring at
+--      the post-Dragonrage Rising Fury linger phase, expiring at
 --        expectedTriggerEnd + min(linger_max, stacks × linger_per_stack)
 --      where stacks is computed by clamping elapsed to expectedTriggerEnd.
 --
@@ -110,6 +110,15 @@ local CAPTURE_WINDOW = 1.0  -- seconds after cast to capture newly-added auras
 -- loses (e.g. unextended Dragonrage at exactly 18s yields 3 stacks of
 -- Rising Fury, not 4). 0.1s puts us firmly past the boundary.
 local THRESHOLD_BUFFER = 0.1
+
+-- Secret-value gate (12.0 secret values, 12.1 fully secret aura payloads).
+-- True for secret scalars and secret tables; false for nil and plain data.
+local function IsSecret(v)
+  if v == nil then return false end
+  if issecretvalue and issecretvalue(v) then return true end
+  if issecrettable and type(v) == "table" and issecrettable(v) then return true end
+  return false
+end
 
 -- Empower arrival-latency grace. UNIT_SPELLCAST_SUCCEEDED arrives client-side
 -- after the server has already resolved the cast and (if Animosity applied)
@@ -344,7 +353,7 @@ local function FireAlert(reasonContext)
       empowerCount or 0)
   end
 
-  -- RF / Risen Fury still presumed alive per the predictive linger model?
+  -- Rising Fury still presumed alive per the predictive linger model?
   -- (We never observe the actual drop in combat — Rising Fury's fields are
   -- secret values during combat — so the Animosity-extended predicted end
   -- is the source of truth. After predicted end, linger ticks down toward
@@ -356,7 +365,7 @@ local function FireAlert(reasonContext)
     local predDur = (expectedTriggerEnd and castTime)
                     and (expectedTriggerEnd - castTime) or 0
     Debug.Log("WATCHER",
-      "Alert suppressed @ %s — RF/Risen Fury linger expired (predDR=%.2fs, stacksAtDrop=%d, empowers=%d)",
+      "Alert suppressed @ %s — Rising Fury linger expired (predDR=%.2fs, stacksAtDrop=%d, empowers=%d)",
       reasonContext, predDur, ComputeMaxStacksReached(), empowerCount or 0)
     return
   end
@@ -693,10 +702,23 @@ end
 -- of truth for trigger duration; this handler just bookkeeps the
 -- captured set so the overlay's out-of-combat trigger-remaining display
 -- can iterate it and pick the longest-remaining aura.
+--
+-- 12.1: the UNIT_AURA payload is fully secret while auras are secret
+-- (combat, encounters, M+, PvP), including auraInstanceID and the
+-- removedAuraInstanceIDs array. Secret payloads are skipped outright;
+-- only out-of-combat casts (target dummy) feed the captured set now.
 ---------------------------------------------------------------------------
 local function HandleAuraUpdate(info)
   if not castTime then return end
   if not info then return end
+
+  -- 12.1: while auras are secret (combat, encounters, M+, PvP) the whole
+  -- UNIT_AURA payload is secret: addedAuras entries and
+  -- removedAuraInstanceIDs can't be iterated, compared, or used as table
+  -- keys. The captured set is cosmetic (overlay's out-of-combat
+  -- trigger-remaining read), so skip bookkeeping entirely for secret
+  -- payloads. Out-of-combat casts (target dummy) still populate it.
+  if IsSecret(info) then return end
 
   local now = GetTime()
   local sinceCast = now - castTime
@@ -705,41 +727,47 @@ local function HandleAuraUpdate(info)
   -- Add phase: track new aura instance IDs within the capture window.
   -- No identification, no scoring — this set is purely a list of
   -- observable aura instances on the player at cast time, used by the
-  -- overlay's OOC trigger-remaining read.
-  if sinceCast < CAPTURE_WINDOW and info.addedAuras then
-    for idx, aura in ipairs(info.addedAuras) do
-      local idOk, id = pcall(function() return aura.auraInstanceID end)
-      if idOk and type(id) == "number" and not capturedAuraIDs[id] then
-        capturedAuraIDs[id] = true
-        if verbose then
-          -- Read spellId for the diagnostic line only (secret-gated; never
-          -- acted on). Format kept stable for cross-version log comparability.
-          local sIDOk, sID = pcall(function()
-            local s = aura.spellId
-            if type(s) ~= "number" then return nil end
-            if issecretvalue and issecretvalue(s) then return nil end
-            return s
-          end)
-          local readableSID = sIDOk and type(sID) == "number" and sID or nil
-          Debug.Log("CAPTURE", "  +%.3fs add[%d] instance=%d sID=%s",
-            sinceCast, idx, id, tostring(readableSID))
+  -- overlay's OOC trigger-remaining read. Everything stays inside pcall
+  -- and every value is secret-gated before it touches a table key.
+  local added = info.addedAuras
+  if sinceCast < CAPTURE_WINDOW and added and not IsSecret(added) then
+    local ok, err = pcall(function()
+      for idx, aura in ipairs(added) do
+        if not IsSecret(aura) then
+          local id = aura.auraInstanceID
+          if type(id) == "number" and not IsSecret(id) and not capturedAuraIDs[id] then
+            capturedAuraIDs[id] = true
+            if verbose then
+              -- Read spellId for the diagnostic line only (secret-gated; never
+              -- acted on). Format kept stable for cross-version log comparability.
+              local sID = aura.spellId
+              local readableSID = (type(sID) == "number" and not IsSecret(sID)) and sID or nil
+              Debug.Log("CAPTURE", "  +%.3fs add[%d] instance=%d sID=%s",
+                sinceCast, idx, id, tostring(readableSID))
+            end
+          end
         end
       end
+    end)
+    if not ok and verbose then
+      Debug.Log("CAPTURE", "  +%.3fs add-phase skipped (secret payload): %s", sinceCast, tostring(err))
     end
   end
 
-  -- Remove phase: drop tracking. removedAuraInstanceIDs is a plain
-  -- numeric array, always safe to read. We don't care which aura
-  -- dropped — the predictive model decides when DR ended.
-  if info.removedAuraInstanceIDs then
-    for _, id in ipairs(info.removedAuraInstanceIDs) do
-      if capturedAuraIDs[id] then
-        capturedAuraIDs[id] = nil
-        if verbose then
-          Debug.Log("CAPTURE", "  +%.3fs drop instance=%d", sinceCast, id)
+  -- Remove phase: drop tracking. We don't care which aura dropped; the
+  -- predictive model decides when DR ended.
+  local removed = info.removedAuraInstanceIDs
+  if removed and not IsSecret(removed) then
+    pcall(function()
+      for _, id in ipairs(removed) do
+        if type(id) == "number" and not IsSecret(id) and capturedAuraIDs[id] then
+          capturedAuraIDs[id] = nil
+          if verbose then
+            Debug.Log("CAPTURE", "  +%.3fs drop instance=%d", sinceCast, id)
+          end
         end
       end
-    end
+    end)
   end
 end
 

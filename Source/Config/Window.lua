@@ -245,7 +245,7 @@ local function BuildFrame()
 
   widgets.actionabilityGate = form:Checkbox{
     label        = "Actionability gate",
-    tooltip      = "When on: if you're in a vehicle, mounted (incl. skyriding combat mounts on bosses like Dimensius P2 / Amirdrassil flying phase), possessed, stunned, feared, silenced, or otherwise unable to act, the alert defers and re-fires the moment you regain control — provided Risen Fury linger still has time. When off, the sound plays regardless of player state. Recommended for high-end optimization.",
+    tooltip      = "When on: if you're in a vehicle, mounted (incl. skyriding combat mounts on bosses like Dimensius P2 / Amirdrassil flying phase), possessed, stunned, feared, silenced, or otherwise unable to act, the alert defers and re-fires the moment you regain control — provided the Rising Fury linger still has time. When off, the sound plays regardless of player state. Recommended for high-end optimization.",
     optionKey    = "ACTIONABILITY_GATE",
     initialValue = Config.Get(Config.Options.ACTIONABILITY_GATE),
     onChange     = function(v) Config.Set(Config.Options.ACTIONABILITY_GATE, v) end,

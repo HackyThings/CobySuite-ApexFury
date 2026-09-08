@@ -23,6 +23,7 @@
 --       inputWidth     = 80,    -- default number/text input width
 --       sliderWidth    = 280,
 --       sliderTemplate = "MinimalSliderTemplate",
+--       sliderHeight   = nil,   -- explicit slider height; templates without a <Size> (e.g. UISliderTemplateWithLabels) need one
 --       checkboxSize   = 24,
 --       labelFont      = U.Fonts.DATA,
 --   })
@@ -65,6 +66,7 @@ function UI.CreateFormLayout(parent, layout)
     inputWidth     = nilOr(layout.inputWidth, 80),
     sliderWidth    = nilOr(layout.sliderWidth, 280),
     sliderTemplate = layout.sliderTemplate or "MinimalSliderTemplate",
+    sliderHeight   = layout.sliderHeight,
     checkboxSize   = nilOr(layout.checkboxSize, 24),
     labelFont      = layout.labelFont or U.Fonts.DATA,
     sectionFont    = layout.sectionFont or "GameFontNormal",
@@ -227,7 +229,7 @@ function FormLayout:Slider(opts)
     name           = opts.name,
     template       = opts.template or self.layout.sliderTemplate,
     width          = opts.width or self.layout.sliderWidth,
-    height         = opts.height,
+    height         = opts.height or self.layout.sliderHeight,
     min            = opts.min or 0,
     max            = opts.max or 100,
     step           = opts.step or 1,

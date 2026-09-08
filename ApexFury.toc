@@ -1,9 +1,9 @@
-## Interface: 120007
+## Interface: 120100
 ## Title: ApexFury
-## Version: 1.0.1
+## Version: 1.0.2
 ## Author: Cobanyte
 ## OptionalDeps: LibSharedMedia-3.0
-## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.0). Cast detection + private-aura-safe lifecycle tracking.
+## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.1). Cast detection + private-aura-safe lifecycle tracking.
 ## IconTexture: Interface\Icons\inv12_apextalent_evoker_risingfury
 ## SavedVariables: APEX_FURY_CONFIG, APEX_FURY_DEBUG_LOG, APEX_FURY_UI_STATE
 

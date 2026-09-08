@@ -4,13 +4,16 @@
   <img src="https://raw.githubusercontent.com/HackyThings/CobySuite-ApexFury/main/.publish-meta/icon/rising-fury-224.jpg" width="160" alt="ApexFury">
 </p>
 
-Sound alert at 4 stacks of Rising Fury for Devastation Evokers in WoW Midnight 12.0.
+> [!CAUTION]
+> <span style="color:#d1242f">**Heads up for 12.1.** ApexFury is working again, but its reason to exist is weaker than it was. Patch 12.1 redesigned the Rising Fury Apex talent: Risen Fury is gone, Rising Fury now lingers on its own for 4 seconds per stack after Dragonrage ends, and Dragonrage turns into Unbound Flame for 4 casts. The burst now leans on those Unbound Flame casts after Dragonrage ends, a moment you can see on your action bar, so a sound cue for the 4th stack matters less than it did in 12.0. I got it working again regardless, so it is here if you still want it.</span>
+
+Sound alert at 4 stacks of Rising Fury for Devastation Evokers in WoW Midnight (12.1).
 
 If you've ever popped Dragonrage, mashed your trinkets early, then realized your stacks weren't actually at 4 yet... yeah. ApexFury plays a sound the instant you hit the threshold so the trinket window stops being a guessing game.
 
 ## The Problem
 
-In Midnight 12.0, Blizzard hid Rising Fury from addons. Reading the stack count directly causes UI errors, and the usual combat-log workaround was also disabled.
+In Midnight, Blizzard hid Rising Fury from addons, and since 12.1 every aura is hidden from addons during combat, encounters, Mythic+ and PvP. Reading the stack count directly causes UI errors, and the usual combat-log workaround was also disabled.
 
 ApexFury never tries to read your stacks. It tracks your Dragonrage cast, your empowers, and the Animosity timing, then plays the sound the exact moment your 4th stack would land.
 
@@ -19,7 +22,7 @@ ApexFury never tries to read your stacks. It tracks your Dragonrage cast, your e
 1. **You cast Dragonrage.** ApexFury starts a timer for when the 4th stack will land. With default settings (Rising Fury ticks every 6s, threshold 4), that's 18 seconds from your cast.
 2. **You cast empowers (Fire Breath / Eternity Surge) inside Dragonrage.** Each one extends Dragonrage via Animosity. ApexFury tracks them and updates its timer to match.
 3. **At the 4th-stack moment, the sound plays.**
-4. **If Dragonrage finishes while you're out of combat** (between pulls in a dungeon, for instance), the alert holds and plays the instant you re-enter combat, as long as your Risen Fury linger is still alive. If the linger has already dropped below your minimum-remaining setting, the alert cancels cleanly instead of firing late.
+4. **If Dragonrage finishes while you're out of combat** (between pulls in a dungeon, for instance), the alert holds and plays the instant you re-enter combat, as long as your Rising Fury linger is still alive. If the linger has already dropped below your minimum-remaining setting, the alert cancels cleanly instead of firing late.
 
 ## Prerequisites
 
@@ -30,14 +33,14 @@ ApexFury checks your class, spec, and talents at login and any time you change t
 | **Devastation Evoker** | Dragonrage only exists on Devastation. On other specs and classes the addon shuts off completely. No background work, no cost. |
 | **Rising Fury talent (rank 1+)** | Without it, the buff this addon tracks doesn't exist at all. The addon stays off. |
 | **Animosity** | Without Animosity, Dragonrage stays at 18 seconds and you only ever get 3 stacks. The 4-stack alert is mathematically impossible. Drop your threshold to 3 if you don't run Animosity. |
-| **Rising Fury rank 3** (recommended) | Rank 3 unlocks Risen Fury, the linger phase that keeps your stacks alive after Dragonrage drops. Without rank 3, alerts only fire during Dragonrage itself, not in the post-DR window. |
+| **Rising Fury rank 3** (recommended) | Rank 3 keeps your Rising Fury stacks alive after Dragonrage drops (4 seconds per stack) and turns Dragonrage into Unbound Flame. Without rank 3, alerts only fire during Dragonrage itself, not in the post-DR window. |
 
 Edge cases it handles:
 
 - **Tip the Scales empowers.** Instant-release empowers go through a different game event than channeled ones. ApexFury watches the right event so they all count toward Animosity.
 - **Trinket procs that land alongside Dragonrage.** ApexFury keeps the right cycle in view so a trinket dropping early doesn't throw off the tracker.
-- **Risen Fury linger after Dragonrage ends.** Won't alert if your stacks have already faded below your minimum-remaining setting.
-- **Vehicles, mounts, possession, stuns and CC.** The optional actionability gate (on by default) holds the alert when you can't act on it, then plays it the instant you regain control, as long as your Risen Fury linger is still alive. Covers raid vehicle mechanics, skyriding combat mounts (Dimensius P2, Amirdrassil flying phase), boss mind-control, and stun, fear, silence, etc. Toggle off in the options if you want the sound regardless of player state.
+- **Rising Fury linger after Dragonrage ends.** Won't alert if your stacks have already faded below your minimum-remaining setting.
+- **Vehicles, mounts, possession, stuns and CC.** The optional actionability gate (on by default) holds the alert when you can't act on it, then plays it the instant you regain control, as long as your Rising Fury linger is still alive. Covers raid vehicle mechanics, skyriding combat mounts (Dimensius P2, Amirdrassil flying phase), boss mind-control, and stun, fear, silence, etc. Toggle off in the options if you want the sound regardless of player state.
 
 ## Install
 
@@ -75,7 +78,7 @@ Open with `/af`. Two panes: form on the left, sound browser on the right.
 - Trigger spell ID (default 375087 = Dragonrage)
 - Threshold (default 4 stacks)
 - Stack interval (default 6s. How often Rising Fury ticks during Dragonrage.)
-- Min linger remaining (default 2s. Held alerts cancel if your Risen Fury linger drops below this.)
+- Min linger remaining (default 2s. Held alerts cancel if your Rising Fury linger drops below this.)
 
 **Sound**
 

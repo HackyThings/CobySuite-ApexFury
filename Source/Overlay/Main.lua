@@ -19,11 +19,11 @@ local TC = U.Colors
 
 local LINE_TOOLTIPS = {
   [1] = "Tracking state. Counts down to alert fire while DR is active. PENDING = timer fired out of combat and is waiting for combat re-entry. fired/suppressed/idle resolve once the cycle completes.",
-  [2] = "Time remaining for Dragonrage (or Risen Fury linger after DR drops). Out of combat: read directly from the aura. In combat: estimated via the predictive model from cast time + Animosity empower extensions.",
+  [2] = "Time remaining for Dragonrage (or the Rising Fury linger after DR drops). Out of combat: read directly from the aura. In combat: estimated via the predictive model from cast time + Animosity empower extensions.",
   [3] = "Empower spells (Fire Breath / Eternity Surge) cast since this Dragonrage, plus the projected Rising Fury stack count at the moment DR drops. Each empower extends DR via Animosity (+5s, 25% diminishing per cast).",
   [4] = "Exact elapsed seconds from the Dragonrage cast to when the alert sound played (or was suppressed). Frozen at the moment of resolution.",
   [5] = "How long ago the most recent alert sound played. Useful for verifying the cadence between Dragonrages.",
-  [6] = "Current verdict — what the watcher would do if the alert moment hit RIGHT NOW. Shows which gates would pass/fail (RF/Risen Fury alive, DR duration ≥ threshold requirement, linger ≥ min_remaining). Helps explain unexpected suppressions.",
+  [6] = "Current verdict — what the watcher would do if the alert moment hit RIGHT NOW. Shows which gates would pass/fail (Rising Fury alive, DR duration ≥ threshold requirement, linger ≥ min_remaining). Helps explain unexpected suppressions.",
   [7] = "Talent gate — addon prerequisites. Requires Devastation Evoker spec + Rising Fury rank ≥1. Animosity needed for threshold ≥4 (unextended Dragonrage caps at 3 stacks). When inactive, the watcher unregisters its events entirely.",
 }
 
@@ -44,10 +44,13 @@ local DEFER_FALLBACK = { status = "waiting", verdict = "awaiting recovery" }
 ---------------------------------------------------------------------------
 -- Best-effort read of an aura's remaining duration. expirationTime is
 -- a secret value on private auras during combat — wrap in pcall and
--- gate on issecretvalue() before any comparison.
+-- gate on issecretvalue() before any comparison. Since 12.1 the whole
+-- AuraData struct is secret while auras are restricted (combat,
+-- encounters, M+, PvP), so bail before touching any field.
 ---------------------------------------------------------------------------
 local function SafeReadRemaining(a)
   if not a then return nil end
+  if issecrettable and issecrettable(a) then return nil end
   local ok, remaining = pcall(function()
     local exp = a.expirationTime
     if type(exp) ~= "number" then return nil end
@@ -65,6 +68,11 @@ end
 -- ReadTriggerRemaining: gated on out-of-combat. In-combat reads of
 -- private aura fields can leave taint markers; the predictive model
 -- handles the in-combat display.
+--
+-- 12.1: auras stay secret between pulls inside M+ / encounters even
+-- though UnitAffectingCombat() is false. The spell-ID read then returns
+-- a fully secret struct and instance-ID reads Lua-error, so both paths
+-- bail out early instead of polling secret data every tick.
 ---------------------------------------------------------------------------
 local function ReadTriggerRemaining()
   if UnitAffectingCombat("player") then return nil, nil end
@@ -73,6 +81,7 @@ local function ReadTriggerRemaining()
   if not trackedID then return nil, nil end
 
   local aura = C_UnitAuras.GetPlayerAuraBySpellID(trackedID)
+  if aura and issecrettable and issecrettable(aura) then return nil, nil end
   local rem = SafeReadRemaining(aura)
   if rem then return rem, "direct" end
 
@@ -81,7 +90,8 @@ local function ReadTriggerRemaining()
     local longest, source = nil, nil
     for id in pairs(state.capturedIDs) do
       local ok, a = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", id)
-      if ok and a then
+      if not ok then break end -- auras restricted: every further read fails too
+      if a then
         local r = SafeReadRemaining(a)
         if r and (not longest or r > longest) then
           longest = r
@@ -160,7 +170,7 @@ local function UpdateDisplay()
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[1]:SetText(string.format(
-        "|cFFCCCCCCStatus:|r |cFF888888EXPIRED — RF/Risen Fury ended|r |cFF555555(%.1fs since cast)|r",
+        "|cFFCCCCCCStatus:|r |cFF888888EXPIRED — Rising Fury ended|r |cFF555555(%.1fs since cast)|r",
         elapsed))
     else
       local reasonText = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).status
@@ -262,7 +272,7 @@ local function UpdateDisplay()
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[6]:SetText(
-        "|cFFCCCCCCVerdict:|r |cFF888888expired — RF/Risen Fury ended|r")
+        "|cFFCCCCCCVerdict:|r |cFF888888expired — Rising Fury ended|r")
     else
       local detail = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).verdict
       lines[6]:SetText(string.format(
