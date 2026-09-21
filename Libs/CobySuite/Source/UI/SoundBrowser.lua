@@ -1,9 +1,9 @@
 -------------------------------------------------------------------------------
--- CobySuite.UI.SoundBrowser — embeddable sound-picker widget
+-- CobySuite.UI.SoundBrowser: embeddable sound-picker widget
 --
--- Reusable across consumer addons. Aggregates Blizzard SoundKit, every
--- LibSharedMedia pack (Astral / Causese / Other), and Leatrix Sounds
--- into one searchable, sortable, virtualized table.
+-- Reusable across consumer addons. Aggregates Blizzard SoundKit and every
+-- LibSharedMedia pack (Astral / Causese / Other) into one searchable,
+-- sortable, virtualized table.
 --
 -- Build it once, embed it inside an options window, and let the user
 -- pick. Selection is reported back via the onSelect callback; current
@@ -24,21 +24,21 @@
 --   browser:Refresh()
 --
 -- Public methods on the returned frame:
---   browser:Refresh()              — re-pull entries (e.g. after addon load)
+--   browser:Refresh()              re-pull entries (e.g. after addon load)
 --   browser:SetSearchText(s)
---   browser:SetSourceFilter(name)  — "All" or a specific source
---   browser:RefreshSelection()     — re-read getCurrentValue + recolor rows
+--   browser:SetSourceFilter(name)  "All" or a specific source
+--   browser:RefreshSelection()     re-read getCurrentValue + recolor rows
 -------------------------------------------------------------------------------
 
-CobySuite.UI = CobySuite.UI or {}
-CobySuite.UI.SoundBrowser = {}
-local SoundBrowser = CobySuite.UI.SoundBrowser
+CobySuite_ApexFury.UI = CobySuite_ApexFury.UI or {}
+CobySuite_ApexFury.UI.SoundBrowser = {}
+local SoundBrowser = CobySuite_ApexFury.UI.SoundBrowser
 
-local Sound = CobySuite.Sound
-local U     = CobySuite.Utilities
+local Sound = CobySuite_ApexFury.Sound
+local U     = CobySuite_ApexFury.Utilities
 local TC    = U.Colors
 local Fonts = U.Fonts
-local SortDir = CobySuite.SortDir
+local SortDir = CobySuite_ApexFury.SortDir
 
 local ROW_HEIGHT  = 22
 local HEADER_H    = 20
@@ -54,9 +54,9 @@ local DEFAULT_COLUMNS = {
   { key = "name",   label = "Name",   width = 240, sortable = true,  justify = "LEFT",
     tooltip = "Sound name. Click to preview and select." },
   { key = "source", label = "Source", width = 90,  sortable = true,  justify = "LEFT",
-    tooltip = "Where the sound comes from (Blizzard, addon name, Leatrix)." },
+    tooltip = "Where the sound comes from: a Blizzard pack or the addon that registered it." },
   { key = "kind",   label = "Type",   width = 70,  sortable = true,  justify = "LEFT", stretch = true,
-    tooltip = "Audio type — SoundKit (built-in IDs), LSM (LibSharedMedia), FileDataID (numeric)." },
+    tooltip = "Audio type: SoundKit (built-in IDs) or LSM (LibSharedMedia)." },
 }
 
 ---------------------------------------------------------------------------
@@ -106,10 +106,7 @@ local function EnsureRowStructure(row, columns)
   row._initialized = true
 
   -- Hover highlight + selection background
-  row.Highlight = row:CreateTexture(nil, "HIGHLIGHT")
-  row.Highlight:SetAllPoints()
-  local hc = TC.HOVER_HIGHLIGHT
-  row.Highlight:SetColorTexture(hc[1], hc[2], hc[3], hc[4])
+  row.Highlight = CobySuite_ApexFury.UI.AddHoverHighlight(row)
 
   row.SelectedBg = row:CreateTexture(nil, "BACKGROUND")
   row.SelectedBg:SetAllPoints()
@@ -124,7 +121,7 @@ local function EnsureRowStructure(row, columns)
 
   row:RegisterForClicks("LeftButtonUp")
 
-  -- Preview button — small speaker on the far left of the name column
+  -- Preview button: small speaker on the far left of the name column
   local play = CreateFrame("Button", nil, row)
   play:SetSize(PREVIEW_SZ, PREVIEW_SZ)
   local tex = play:CreateTexture(nil, "ARTWORK")
@@ -136,7 +133,7 @@ local function EnsureRowStructure(row, columns)
   hl:SetColorTexture(1, 1, 1, 0.3)
   row.Preview = play
 
-  -- Cells per column (text only — name cell hosts the play icon to the left)
+  -- Cells per column (text only; the name cell hosts the play icon to the left)
   row._cells = {}
   for i = 1, #columns do
     local cell = {}
@@ -210,6 +207,10 @@ function SoundBrowser.Create(parent, opts)
   -- Internal state
   local allEntries          = {}
   local filteredEntries     = {}
+  -- Row index per entry for the alternating background. Kept here rather
+  -- than stamped on the entries: those are the catalog's shared objects, and
+  -- two browsers with different filters would overwrite each other's stamps.
+  local rowIndexOf          = setmetatable({}, { __mode = "k" })
   local searchText          = ""
   local activeSource        = "All"
   local sortKey             = "name"
@@ -227,7 +228,7 @@ function SoundBrowser.Create(parent, opts)
   bg:SetColorTexture(cb[1], cb[2], cb[3], cb[4])
 
   ---------------------------------------------------------------------------
-  -- Top bar — source filter + search + count
+  -- Top bar: source filter + search + count
   ---------------------------------------------------------------------------
   local topBar = CreateFrame("Frame", nil, frame)
   topBar:SetPoint("TOPLEFT", PAD, -PAD)
@@ -259,10 +260,10 @@ function SoundBrowser.Create(parent, opts)
   countText:SetText("")
 
   ---------------------------------------------------------------------------
-  -- TableHeader — anchored below top bar
+  -- TableHeader: anchored below top bar
   ---------------------------------------------------------------------------
   local header = CreateFrame("Frame", nil, frame)
-  Mixin(header, CobySuite.UI.TableHeaderMixin)
+  Mixin(header, CobySuite_ApexFury.UI.TableHeaderMixin)
   header:SetPoint("TOPLEFT", topBar, "BOTTOMLEFT", 0, -4)
   header:SetPoint("TOPRIGHT", topBar, "BOTTOMRIGHT", -SCROLLBAR_W - 4, -4)
   header:SetHeight(HEADER_H)
@@ -274,7 +275,7 @@ function SoundBrowser.Create(parent, opts)
   -- TableHeader expects utilities.AddTooltip; CobySuite splits it across
   -- Utilities (constants) and UI (AddTooltip), so merge for the mixin.
   local utilsForHeader = setmetatable(
-    { AddTooltip = CobySuite.UI.AddTooltip },
+    { AddTooltip = CobySuite_ApexFury.UI.AddTooltip },
     { __index = U }
   )
 
@@ -322,7 +323,7 @@ function SoundBrowser.Create(parent, opts)
     EnsureRowStructure(row, header:GetColumns())
 
     -- Reset and bind handlers (clean per virtualization cycle).
-    -- Selection repaint is the consumer's job — call frame:RefreshSelection()
+    -- Selection repaint is the consumer's job: call frame:RefreshSelection()
     -- after committing so a cancelled commit doesn't leave a stale highlight.
     row:SetScript("OnClick", function(self)
       if not self._entry then return end
@@ -354,7 +355,7 @@ function SoundBrowser.Create(parent, opts)
     end)
     row:SetScript("OnLeave", GameTooltip_Hide)
 
-    PopulateRow(row, data, header:GetColumns(), getCurrentValue(), data._rowIndex)
+    PopulateRow(row, data, header:GetColumns(), getCurrentValue(), rowIndexOf[data])
   end)
 
   ScrollUtil.InitScrollBoxListWithScrollBar(scrollBox, scrollBar, scrollView)
@@ -366,7 +367,6 @@ function SoundBrowser.Create(parent, opts)
   local function MatchesSource(e, src)
     if src == "All"      then return true end
     if src == "Blizzard" then return e.source == "Blizzard" end
-    if src == "Leatrix"  then return e.source == "Leatrix"  end
     if src:sub(1, 10) == "Blizzard: " then
       return e.source == "Blizzard" and e.pack == src:sub(11)
     end
@@ -393,16 +393,16 @@ function SoundBrowser.Create(parent, opts)
     end
 
     -- allEntries is pre-sorted; filteredEntries inherits the order.
-    -- Stamp row indices for alternating bg striping.
+    wipe(rowIndexOf)
     for i = 1, #filteredEntries do
-      filteredEntries[i]._rowIndex = i
+      rowIndexOf[filteredEntries[i]] = i
     end
   end
 
   Refresh = function()
     ComputeFiltered()
     dataProvider:Flush()
-    -- Bulk insert with a single OnInsert event — replaces N per-element
+    -- Bulk insert with a single OnInsert event: replaces N per-element
     -- Insert calls each of which would notify the scroll box. With ~800
     -- Blizzard entries this turns ~800ms of layout thrash into ~10ms.
     if dataProvider.InsertTable then
@@ -421,74 +421,52 @@ function SoundBrowser.Create(parent, opts)
   end
 
   ---------------------------------------------------------------------------
-  -- Build entries. CobySuite.Sound.GetEntries is module-level cached
-  -- (slot per includeLeatrix flag) so this is O(1) after first call;
-  -- we sort a local copy so a re-sort here doesn't disturb the cache
-  -- shared with other consumers.
+  -- Build entries. CobySuite.Sound.GetEntries is module-level cached, so
+  -- this is O(1) after first call; we sort a local copy so a re-sort here
+  -- doesn't disturb the cache shared with other consumers. The copy is kept
+  -- until the catalog generation moves.
   ---------------------------------------------------------------------------
-  local lastIncludeLeatrix
+  local lastGeneration
   local function RebuildAllEntries()
-    local needLeatrix = (activeSource == "Leatrix")
-    if allEntries and lastIncludeLeatrix == needLeatrix then
-      -- Same includeLeatrix mode — current allEntries is still valid.
-      -- Just re-sort if user changed sort key (handled separately by onSort).
+    local generation = Sound.GetCatalogGeneration()
+    if lastGeneration == generation then
+      -- Current allEntries is still valid. A sort change re-sorts it
+      -- separately (onSort).
       return
     end
-    local source = Sound.GetEntries({ includeLeatrix = needLeatrix })
+    local source = Sound.GetEntries()
     -- Shallow copy so our sort doesn't mutate the cached order shared
     -- with other browser instances.
     allEntries = {}
     for i = 1, #source do allEntries[i] = source[i] end
     SortEntries(allEntries, sortKey, sortDir == SortDir.ASC)
-    lastIncludeLeatrix = needLeatrix
+    lastGeneration = generation
   end
 
   ---------------------------------------------------------------------------
   -- Source filter dropdown wiring
   ---------------------------------------------------------------------------
+  -- Blizzard runs this builder whenever the menu is set up, shown or
+  -- opened; the names and counts come from the catalog's count snapshot, so
+  -- no build repeats a scan
   sourceDD:SetupMenu(function(_, root)
-    local sources = Sound.GetSourceList()
-    local labels = { "All" }
-    for _, s in ipairs(sources) do table.insert(labels, s) end
+    local sources, counts, total = Sound.GetSourceCounts()
 
-    -- Compute counts once via the cheap path (avoids materializing 275k
-    -- Leatrix entries just to render menu labels). The "All" count
-    -- deliberately EXCLUDES Leatrix to match RebuildAllEntries's lazy-
-    -- load behavior — RebuildAllEntries only materializes the Leatrix
-    -- catalog when activeSource == "Leatrix", so summing Leatrix into
-    -- "All" would advertise ~280k sounds while only ~1300 are actually
-    -- searchable from that filter.
-    local counts = {}
-    local total = 0
-    local leatrixAvailable = false
-    for _, s in ipairs(sources) do
-      counts[s] = Sound.GetSourceCount(s)
-      if s == "Leatrix" then
-        leatrixAvailable = true
-      else
-        total = total + counts[s]
-      end
-    end
-    counts["All"] = total
-
-    -- When Leatrix is loaded, label the "All" radio explicitly so users
-    -- know they need to switch to the Leatrix filter to search the
-    -- ~275k FileDataIDs.
-    local allLabel = leatrixAvailable
-      and string.format("All — non-Leatrix (%d)", counts["All"] or 0)
-      or  string.format("All (%d)",                counts["All"] or 0)
-
-    for _, src in ipairs(labels) do
+    root:CreateRadio(string.format("All (%d)", total or 0),
+      function() return activeSource == "All" end,
+      function()
+        activeSource = "All"
+        sourceDD:OverrideText("All")
+        RebuildAllEntries()
+        Refresh()
+      end)
+    for _, src in ipairs(sources) do
       local capt = src
-      local rowLabel = (src == "All") and allLabel
-        or string.format("%s (%d)", src, counts[src] or 0)
-      root:CreateRadio(rowLabel,
+      root:CreateRadio(string.format("%s (%d)", src, counts[src] or 0),
         function() return activeSource == capt end,
         function()
           activeSource = capt
           sourceDD:OverrideText(capt)
-          -- Leatrix is huge — only build the entry list when explicitly
-          -- requested (otherwise allEntries excludes the 275k FDIDs).
           RebuildAllEntries()
           Refresh()
         end)
@@ -497,22 +475,11 @@ function SoundBrowser.Create(parent, opts)
   sourceDD:OverrideText(activeSource)
 
   ---------------------------------------------------------------------------
-  -- Search wiring (debounced when active source = Leatrix, since that
-  -- dataset is ~275k entries and a per-keystroke filter pass is too slow)
+  -- Search wiring
   ---------------------------------------------------------------------------
-  local searchTimer
   searchEB:SetScript("OnTextChanged", function(self)
-    local target = self:GetText() or ""
-    if searchTimer then searchTimer:Cancel(); searchTimer = nil end
-    if activeSource == "Leatrix" then
-      searchTimer = C_Timer.NewTimer(0.3, function()
-        searchText = target
-        Refresh()
-      end)
-    else
-      searchText = target
-      Refresh()
-    end
+    searchText = self:GetText() or ""
+    Refresh()
   end)
   searchEB:SetScript("OnEscapePressed", function(self)
     self:SetText("")
@@ -536,10 +503,13 @@ function SoundBrowser.Create(parent, opts)
     Refresh()
   end
 
+  -- Every source change goes through RebuildAllEntries, as the dropdown
+  -- does, so a catalog that changed since the last pull is picked up (the
+  -- call is cheap when nothing changed)
   function frame:SetSourceFilter(name)
     activeSource = name or "All"
     sourceDD:OverrideText(activeSource)
-    if name == "Leatrix" then RebuildAllEntries() end
+    RebuildAllEntries()
     Refresh()
   end
 

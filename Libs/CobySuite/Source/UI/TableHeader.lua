@@ -1,15 +1,28 @@
 -------------------------------------------------------------------------------
--- CobySuite.UI.TableHeaderMixin — shared sortable, resizable column headers
+-- CobySuite.UI.TableHeaderMixin: shared sortable, resizable column headers
 --
 -- Provides column headers with drag-to-resize, click-to-sort, double-click
 -- auto-fit, right-click reset, and persistent column widths. Each consumer
 -- passes its own column definitions, persistence config, and callbacks.
 -------------------------------------------------------------------------------
 
-CobySuite.UI = CobySuite.UI or {}
+CobySuite_ApexFury.UI = CobySuite_ApexFury.UI or {}
 
 local MIN_COL_WIDTH = 25
-local SortDir = CobySuite.SortDir
+local SortDir = CobySuite_ApexFury.SortDir
+local IsFiniteNumber = CobySuite_ApexFury.Utilities.IsFiniteNumber
+
+-- A usable column width: a finite number, never below the minimum, and no
+-- wider than room when room is given. Room below the minimum still yields
+-- the minimum; the header clips what does not fit.
+local function ClampWidth(width, room)
+  width = tonumber(width)
+  if not IsFiniteNumber(width) then
+    return MIN_COL_WIDTH
+  end
+  if room and width > room then width = room end
+  return math.max(width, MIN_COL_WIDTH)
+end
 
 -- Defaults when no utilities table is provided
 local DEFAULT_HEADER_BG    = {0.1, 0.1, 0.1, 0.5}
@@ -17,8 +30,8 @@ local DEFAULT_DIVIDER      = {0.3, 0.3, 0.3, 0.8}
 local DEFAULT_RESIZE_HL    = {0.5, 0.5, 1.0, 0.5}
 local DEFAULT_HEADER_FONT  = "GameFontNormalSmall"
 
-CobySuite.UI.TableHeaderMixin = {}
-local Mixin = CobySuite.UI.TableHeaderMixin
+CobySuite_ApexFury.UI.TableHeaderMixin = {}
+local Mixin = CobySuite_ApexFury.UI.TableHeaderMixin
 
 -------------------------------------------------------------------------------
 -- Init
@@ -34,6 +47,21 @@ local Mixin = CobySuite.UI.TableHeaderMixin
 --   headerHeight    (number?)  default 20
 --   headerFont      (string?)  font object name, default from utilities or GameFontNormalSmall
 --   leftPadding     (number?)  default 0
+--   fitToWidth      (bool?)    default false. When the columns are wider than
+--                              the header, shrink the width above each
+--                              column's minimum, in proportion, so every
+--                              column stays in view; the wanted widths are
+--                              kept (and saved), so a wider header gives the
+--                              room back. Call :FitColumns() after changes.
+--                              Pressing a divider (a click, the start of a
+--                              drag, or the auto-fit double-click) makes every
+--                              column's current fitted width its wanted
+--                              width, which the release saves: once the user
+--                              touches a divider, the layout on screen is
+--                              the one kept.
+--
+-- Every width, dragged, auto-fitted or restored, is at least MIN_COL_WIDTH;
+-- a saved width that is not a usable number falls back to the default.
 -------------------------------------------------------------------------------
 function Mixin:Init(opts)
   self._columns = {}
@@ -47,6 +75,7 @@ function Mixin:Init(opts)
   self._measureColumn = opts.measureColumn
   self._headerHeight = opts.headerHeight or 20
   self._leftPadding = opts.leftPadding or 0
+  self._fitToWidth = opts.fitToWidth or false
   self._sortKey = nil
   self._sortDir = nil
 
@@ -62,6 +91,7 @@ function Mixin:Init(opts)
       key = col.key,
       label = col.label,
       width = col.width,
+      want = col.width,
       _defaultWidth = col.width,
       sortable = col.sortable ~= false,
       stretch = col.stretch or false,
@@ -73,6 +103,10 @@ function Mixin:Init(opts)
   self:_RestoreWidths()
   self:_BuildHeaders()
   self:_SetupDragTracking()
+
+  if self._fitToWidth then
+    self:HookScript("OnSizeChanged", function(header) header:FitColumns() end)
+  end
 end
 
 -------------------------------------------------------------------------------
@@ -86,8 +120,8 @@ function Mixin:_SaveWidths()
   if not sv[path] then sv[path] = {} end
   local saved = {}
   for _, col in ipairs(self._columns) do
-    if col.key and col.width then
-      saved[col.key] = col.width
+    if col.key and col.width and not col.stretch then
+      saved[col.key] = col.want or col.width
     end
   end
   sv[path][self._persistenceKey] = saved
@@ -99,10 +133,15 @@ function Mixin:_RestoreWidths()
   if not sv then return end
   local saved = sv[self._persistence.path]
     and sv[self._persistence.path][self._persistenceKey]
-  if not saved then return end
+  if type(saved) ~= "table" then return end
   for _, col in ipairs(self._columns) do
-    if col.key and saved[col.key] then
-      col.width = saved[col.key]
+    if col.key and not col.stretch and saved[col.key] ~= nil then
+      -- Earlier builds could save negative widths from a narrow window;
+      -- anything that is not a usable width keeps the default
+      local w = tonumber(saved[col.key])
+      if IsFiniteNumber(w) and w >= MIN_COL_WIDTH then
+        col.width, col.want = w, w
+      end
     end
   end
 end
@@ -113,6 +152,13 @@ end
 function Mixin:_BuildHeaders()
   local h = self._headerHeight
   self:SetHeight(h)
+
+  -- Columns sit at fixed x offsets, so whenever the header is narrower than the
+  -- sum of its column widths (a shrunk window, or defaults that never fitted in
+  -- the first place) the right-hand columns would draw straight over whatever
+  -- sits beside the table: the scrollbar, a detail pane, the window edge. Clip
+  -- to the header's own bounds so they are occluded instead.
+  self:SetClipsChildren(true)
 
   -- Resolve colors from utilities or use defaults
   local utils = self._utilities
@@ -188,6 +234,13 @@ function Mixin:_BuildHeaders()
       handle:EnableMouse(true)
       local capturedIndex = i
       handle:SetScript("OnMouseDown", function()
+        if header._fitToWidth then
+          -- The layout on screen becomes the wanted one, so the drag moves
+          -- only the column being dragged
+          for _, c in ipairs(header._columns) do
+            if not c.stretch then c.want = c.width end
+          end
+        end
         header._dragIndex = capturedIndex
         header._dragHighlight = highlight
         header._dragStartX = GetCursorPosition() / (header:GetEffectiveScale() or 1)
@@ -225,9 +278,9 @@ function Mixin:_SetupDragTracking()
 
     local cursorX = GetCursorPosition() / (header:GetEffectiveScale() or 1)
     local delta = cursorX - header._dragStartX
-    local newWidth = math.max(header._dragStartWidth + delta, MIN_COL_WIDTH)
 
-    -- Clamp: don't let this column push others below minimum
+    -- The room the other columns leave; the result never drops below the
+    -- minimum, even when there is less room than that
     local cols = header._columns
     local totalOther = 0
     for j, c in ipairs(cols) do
@@ -235,12 +288,12 @@ function Mixin:_SetupDragTracking()
         totalOther = totalOther + (c.width or 150)
       end
     end
-    local containerWidth = header:GetWidth()
-    local maxWidth = containerWidth - totalOther - MIN_COL_WIDTH
-    newWidth = math.min(newWidth, maxWidth)
+    local room = header:GetWidth() - header._leftPadding - totalOther - MIN_COL_WIDTH
+    local newWidth = ClampWidth(header._dragStartWidth + delta, room)
 
     if cols[header._dragIndex].width ~= newWidth then
       cols[header._dragIndex].width = newWidth
+      cols[header._dragIndex].want = newWidth
       header:RepositionHeaders()
       if header._onColumnResize then
         header._onColumnResize()
@@ -390,18 +443,16 @@ function Mixin:AutoFitColumn(colIndex)
     end
   end
 
-  -- Clamp to min and max
-  maxWidth = math.max(maxWidth, MIN_COL_WIDTH)
+  -- Clamp to the room the other columns leave, never below the minimum
   local totalOther = 0
   for j, c in ipairs(self._columns) do
     if j ~= colIndex and not c.stretch then
       totalOther = totalOther + (c.width or 150)
     end
   end
-  local containerWidth = self:GetWidth()
-  maxWidth = math.min(maxWidth, containerWidth - totalOther - MIN_COL_WIDTH)
-
-  col.width = maxWidth
+  local room = self:GetWidth() - self._leftPadding - totalOther - MIN_COL_WIDTH
+  col.width = ClampWidth(maxWidth, room)
+  col.want = col.width
   self:RepositionHeaders()
   if self._onColumnResize then
     self._onColumnResize()
@@ -413,6 +464,7 @@ function Mixin:ResetColumnWidths()
   for _, col in ipairs(self._columns) do
     if col._defaultWidth then
       col.width = col._defaultWidth
+      col.want = col._defaultWidth
     end
   end
   self:RepositionHeaders()
@@ -420,4 +472,52 @@ function Mixin:ResetColumnWidths()
     self._onColumnResize()
   end
   self:_SaveWidths()
+  if self._fitToWidth then self:FitColumns() end
+end
+
+-- Fits the columns into the header's width (opts.fitToWidth). Every column
+-- takes its wanted width when they all fit. Otherwise only the width above
+-- each column's minimum shrinks, by one shared factor, so no column goes
+-- below its floor; when even the minimums do not fit, all sit at the
+-- minimum and the header clips the rest.
+function Mixin:FitColumns()
+  local room = self:GetWidth() - self._leftPadding
+  if room <= 0 then return end
+
+  local total, spare = 0, 0
+  for _, col in ipairs(self._columns) do
+    if not col.stretch then
+      local want = ClampWidth(col.want or col.width)
+      total = total + want
+      spare = spare + (want - MIN_COL_WIDTH)
+    end
+  end
+
+  local excess = total - room
+  local keep = 1
+  if excess > 0 then
+    keep = spare > 0 and math.max(0, 1 - excess / spare) or 0
+  end
+
+  local changed = false
+  for _, col in ipairs(self._columns) do
+    if not col.stretch then
+      local want = ClampWidth(col.want or col.width)
+      local width = want
+      if excess > 0 then
+        width = math.floor(MIN_COL_WIDTH + (want - MIN_COL_WIDTH) * keep)
+      end
+      if col.width ~= width then
+        col.width = width
+        changed = true
+      end
+    end
+  end
+
+  if changed then
+    self:RepositionHeaders()
+    if self._onColumnResize then
+      self._onColumnResize()
+    end
+  end
 end

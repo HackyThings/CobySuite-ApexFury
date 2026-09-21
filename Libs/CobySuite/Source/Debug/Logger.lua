@@ -1,28 +1,28 @@
 -------------------------------------------------------------------------------
--- CobySuite.Debug.NewLogger — shared ring-buffer debug logger constructor
+-- CobySuite.Debug.NewLogger: shared ring-buffer debug logger constructor
 --
 -- Each consumer addon calls NewLogger(opts) to get its own independent instance
 -- with its own buffer, categories, persistence, and session header.
 -------------------------------------------------------------------------------
 
-CobySuite.Debug = CobySuite.Debug or {}
+CobySuite_ApexFury.Debug = CobySuite_ApexFury.Debug or {}
 
 -- Levels are shared across all logger instances
-CobySuite.Debug.Levels = {
+CobySuite_ApexFury.Debug.Levels = {
   INFO  = "INFO",
   WARN  = "WARN",
   STATE = "STATE",
   EVENT = "EVENT",
 }
 
-local Levels = CobySuite.Debug.Levels
+local Levels = CobySuite_ApexFury.Debug.Levels
 
 -------------------------------------------------------------------------------
--- AppendConfigSnapshot — emits "Config Snapshot:" + sorted key=value pairs
+-- AppendConfigSnapshot: emits "Config Snapshot:" + sorted key=value pairs
 -- for every non-table entry in the named SavedVariable. Used by consumer
 -- addons' sessionHeader callbacks; consumers append their own extras after.
 -------------------------------------------------------------------------------
-function CobySuite.Debug.AppendConfigSnapshot(lines, svName)
+function CobySuite_ApexFury.Debug.AppendConfigSnapshot(lines, svName)
   table.insert(lines, "Config Snapshot:")
   local sv = _G[svName]
   if sv then
@@ -43,13 +43,13 @@ end
 
 -------------------------------------------------------------------------------
 -- opts:
---   addonName       (string)   "CobySniper" or "Linkepedia"
+--   addonName       (string)   "CobySniper" or "CobysLinkepedia"
 --   categories      (table)    {"INIT", "CONFIG", ...}
---   savedVariable   (string)   "COBY_SNIPER_DEBUG_LOG" or "LinkepediaDebugLog"
+--   savedVariable   (string)   "COBY_SNIPER_DEBUG_LOG" or "COBYS_LINKEPEDIA_DEBUG_LOG"
 --   bufferSize      (number?)  max entries, default 5000
---   sessionHeader   (function?) fn(lines) — appends extra lines to the header table
+--   sessionHeader   (function?) fn(lines): appends extra lines to the header table
 -------------------------------------------------------------------------------
-function CobySuite.Debug.NewLogger(opts)
+function CobySuite_ApexFury.Debug.NewLogger(opts)
   local addonName     = opts.addonName
   local categories    = opts.categories
   local savedVariable = opts.savedVariable
@@ -65,10 +65,11 @@ function CobySuite.Debug.NewLogger(opts)
   local writePos = 1
   local bufferSize = 0
   local totalAdded = 0
+  local resetCount = 0   -- bumped whenever the buffer is replaced (Clear, the load-time restore)
   local sessionStartTime = date("%Y-%m-%d %H:%M:%S")
 
   ---------------------------------------------------------------------------
-  -- Timestamp from debugprofilestop() — millisecond precision
+  -- Timestamp from debugprofilestop(), millisecond precision
   ---------------------------------------------------------------------------
   local function GetTimestamp()
     local ms = debugprofilestop()
@@ -145,11 +146,37 @@ function CobySuite.Debug.NewLogger(opts)
     return totalAdded
   end
 
+  -- The entries added since seq (an earlier GetEntryCount()), oldest first,
+  -- and whether the ring had already overwritten some of them (the caller
+  -- fell more than a whole buffer behind). Only the new entries are copied;
+  -- the live debug view uses this instead of GetBuffer.
+  function logger.GetEntriesSince(seq)
+    local newCount = totalAdded - (seq or 0)
+    if newCount <= 0 then return {}, false end
+    local overrun = newCount > bufferSize
+    if overrun then newCount = bufferSize end
+    local out = {}
+    for k = newCount, 1, -1 do
+      -- The newest entry sits just before writePos
+      out[newCount - k + 1] = buffer[(writePos - k - 1) % maxEntries + 1]
+    end
+    return out, overrun
+  end
+
+  -- How many times the buffer has been replaced: Clear and the restore of
+  -- the saved log at ADDON_LOADED. The entry count alone cannot show a
+  -- restore, which can leave it higher than before, so a view that keeps a
+  -- position (GetEntriesSince) rebuilds when this changes.
+  function logger.GetResetCount()
+    return resetCount
+  end
+
   function logger.Clear()
     wipe(buffer)
     writePos = 1
     bufferSize = 0
     totalAdded = 0
+    resetCount = resetCount + 1
   end
 
   ---------------------------------------------------------------------------
@@ -220,7 +247,7 @@ function CobySuite.Debug.NewLogger(opts)
     -- Iterate newest-first through ring buffer.
     -- writePos points to the slot AFTER the newest entry (the next slot to
     -- write into), so the newest entry sits at writePos-1 in 1-indexed
-    -- terms — that's `(writePos - 0 - 2) % maxEntries + 1`. Subtracting
+    -- terms, which is `(writePos - 0 - 2) % maxEntries + 1`. Subtracting
     -- only -1 lands on writePos itself, which is the OLDEST slot in a
     -- wrapped buffer (or a nil slot in a partial buffer, dropping the
     -- oldest entry). The off-by-one corrupted Copy All / Copy Last 250
@@ -282,6 +309,7 @@ function CobySuite.Debug.NewLogger(opts)
         writePos = 1
         bufferSize = 0
         totalAdded = 0
+        resetCount = resetCount + 1
 
         for _, entry in ipairs(saved) do
           buffer[writePos] = entry

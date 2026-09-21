@@ -4,6 +4,31 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-21
+
+### Changed
+
+- Redesigned settings window (`/af`): Behavior, Trigger and Sound are categories on the left, and the sound browser now sits under the Sound settings.
+- Changes take effect when you press Apply. Cancel, or closing the window, throws them away. Defaults (which replaces Reset Defaults) fills in every default for you to check, and nothing changes until you press Apply.
+- Picking a sound in the browser, or with Grab Sound from Leatrix Sounds, works the same way: press Apply to keep it. The speaker button beside "Selected" plays the sound you picked on the audio channel you picked, before you apply.
+- `/af channel` and `/af reset` update the settings window while it is open.
+- The settings window can no longer be opened for the first time during combat (after logging in or a `/reload`). ApexFury tells you to try again after combat. Once it has been opened, `/af` works in combat as before.
+- `/af help` is in color: the command, what you fill in and its description each stand out.
+
+### Fixed
+
+- A Fire Breath or Eternity Surge that registers a moment late, right at the 4th-stack moment, no longer loses the alert. ApexFury waits up to half a second for it and plays the sound once if it extended Dragonrage.
+- An alert held until you could act (out of combat, in a vehicle, mounted, stunned) now plays after Dragonrage has ended only with Rising Fury rank 3, the only rank whose stacks outlast Dragonrage.
+- Talent detection recovers on its own when your talents load late (login, loadout or spec swaps). ApexFury checks again after 1, 2 and 4 seconds and whenever your talents change, instead of treating Rising Fury or Animosity as untalented until a `/reload`.
+- The overlay's stacks line shows the stacks you have now and, in brackets, the stacks you will have when Dragonrage ends.
+- The overlay's "DR remain" line no longer shows another buff's duration. Out of combat it reads Dragonrage's own timer once after your cast and after each empower (marked "read"); otherwise it estimates.
+- The "Alerting enabled" tooltip now says that turning it off stops tracking Dragonrage.
+- With Rising Fury rank 1 or 2, a Dragonrage too short for your threshold is now reported as too short on the overlay and in the debug log. It used to be blamed on an expired linger.
+- Clicking a sound in the browser previews it on the audio channel you picked, the way the alert itself will play. It used to preview on Master whatever you chose.
+- `/af status` and the overlay say "Checking talents..." while your talent data is still loading after login; they used to show a blank reason.
+- The number boxes in the settings refuse anything that is not a real number (such as `inf`), and a damaged saved setting goes back to its default at login.
+- Running ApexFury beside other Coby addons from different releases no longer lets one addon's copy of the shared code break another's.
+
 ## [1.0.2] - 2026-09-08
 
 - Updated for World of Warcraft patch 12.1 (Curse of Ula'tek).
@@ -19,7 +44,8 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 Initial release of ApexFury.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.3
 [1.0.2]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.2
 [1.0.1]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.1
 [1.0.0]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.0

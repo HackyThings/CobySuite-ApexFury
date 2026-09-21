@@ -1,18 +1,22 @@
 ## Interface: 120100
 ## Title: ApexFury
-## Version: 1.0.2
+## Version: 1.0.3
 ## Author: Cobanyte
 ## OptionalDeps: LibSharedMedia-3.0
-## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.1). Cast detection + private-aura-safe lifecycle tracking.
+## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.1). Timed from your Dragonrage and empower casts; never reads private auras.
 ## IconTexture: Interface\Icons\inv12_apextalent_evoker_risingfury
 ## SavedVariables: APEX_FURY_CONFIG, APEX_FURY_DEBUG_LOG, APEX_FURY_UI_STATE
 
 # Embedded CobySuite Library
 Libs\CobySuite\Source\Core.lua
+Libs\CobySuite\Build.lua
 Libs\CobySuite\Source\Utilities\Main.lua
+Libs\CobySuite\Source\Chat\Main.lua
+Libs\CobySuite\Source\Slash\Main.lua
 Libs\CobySuite\Source\Config\Main.lua
 Libs\CobySuite\Source\UI\Factories.lua
-Libs\CobySuite\Source\UI\FormLayout.lua
+Libs\CobySuite\Source\UI\Window.lua
+Libs\CobySuite\Source\UI\SettingsWindow.lua
 Libs\CobySuite\Source\UI\TableHeader.lua
 Libs\CobySuite\Source\Debug\Logger.lua
 Libs\CobySuite\Source\Debug\Window.lua
@@ -36,7 +40,7 @@ Source\Config\Window.lua
 # Watcher
 Source\Watcher\Main.lua
 
-# TalentGate (must load after Watcher — calls Watcher.Activate/Deactivate)
+# TalentGate (must load after Watcher: calls Watcher.Activate/Deactivate)
 Source\TalentGate\Main.lua
 
 # Overlay

@@ -35,40 +35,32 @@ function ApexFury.GetTalentGate()
 end
 
 -- Audio channels accepted by ApexFury.Sound.Play. Listed in user-preference
--- order — "Dialog" is the default for in-combat audibility.
+-- order: "Dialog" is the default for in-combat audibility.
 ApexFury.SOUND_CHANNELS = { "Dialog", "Master", "SFX" }
 ApexFury.SOUND_CHANNEL_ALIASES = {
   dialog = "Dialog", master = "Master", sfx = "SFX",
 }
 
 -------------------------------------------------------------------------------
--- Chat output (branded prefix)
+-- Chat output (branded prefix) via CobySuite.Chat.NewMessenger
 -------------------------------------------------------------------------------
-local BRAND_CHAT_PREFIX = ApexFury.WrapBrand("[ApexFury]") .. " "
-local function Message(text)
-  print(BRAND_CHAT_PREFIX .. text)
-end
+local Message = CobySuite_ApexFury.Chat.NewMessenger({
+  prefix = "[ApexFury]",
+  color  = ApexFury.BRAND_COLOR,
+})
 ApexFury.Message = Message
 
 -------------------------------------------------------------------------------
--- Slash command registration and routing
+-- Slash commands
+--
+-- CobySuite.Slash.Register owns the aliases, the SlashCmdList entry, the
+-- dispatch, and the generated "help" and "version" commands. The command
+-- bodies live here.
 -------------------------------------------------------------------------------
-SLASH_APEXFURY1 = "/apexfury"
-SLASH_APEXFURY2 = "/apex"
-SLASH_APEXFURY3 = "/af"
-
-local function PrintHelp()
-  Message("|cFFFFFFFFApexFury v" .. VERSION .. "|r — Slash commands:")
-  Message("  /af — Open the settings window")
-  Message("  /af help — Show this help")
-  Message("  /af status — Print current settings to chat")
-  Message("  /af scan [name] — List active player buffs (find spell IDs)")
-  Message("  /af overlay — Toggle the on-screen status frame")
-  Message("  /af debug — Toggle the debug log window")
-  Message("  /af channel [dialog|master|sfx] — Show or change the audio channel")
-  Message("  /af reset — Restore all settings to defaults")
-  Message("  /af version — Print the addon version")
-  Message("  |cFF888888(All other settings live in the GUI — open with /af)|r")
+local function ToggleSettings()
+  if ApexFury.Config.ToggleSettings then
+    ApexFury.Config.ToggleSettings()
+  end
 end
 
 local function PrintStatus()
@@ -89,11 +81,14 @@ local function PrintStatus()
       if gate.hasAnimosity then
         Message("  Talent gate: |cFF00FF00ready|r |cFF888888(RF rank " ..
           tostring(gate.risingFuryRank) .. ", Animosity on)|r")
+      elseif gate.hasAnimosity == nil then
+        Message("  Talent gate: |cFF00FF00ready|r |cFF888888(RF rank " ..
+          tostring(gate.risingFuryRank) .. ", Animosity not found yet, assumed on)|r")
       else
         Message("  Talent gate: |cFFFFAA00active, max 3 stacks|r |cFF888888(no Animosity)|r")
       end
     else
-      Message("  Talent gate: |cFFFF8800inactive|r — " .. (gate.detail or gate.reason or "?"))
+      Message("  Talent gate: |cFFFF8800inactive|r: " .. (gate.detail or gate.reason or "?"))
     end
   end
   Message("  Enabled: " .. (enabled and "|cFF00FF00yes|r" or "|cFFFF4C4Cno|r"))
@@ -111,102 +106,114 @@ local function PrintStatus()
   Message("  Audio channel: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog") .. "|r")
 end
 
-local function HandleSlashCommand(input)
-  local cmd, rest = input:match("^(%S+)%s*(.*)")
-  if not cmd then cmd = input end
-  cmd = cmd:lower():trim()
-
-  local Config = ApexFury.Config
-
-  -- Bare /af opens the settings window (most common entry point).
-  if cmd == "" or cmd == "options" or cmd == "config" or cmd == "settings" then
-    if ApexFury.Config.ToggleSettings then
-      ApexFury.Config.ToggleSettings()
+local function ScanBuffs(rest)
+  local filter = rest and rest:lower():trim() or ""
+  Message(filter == "" and "Active player buffs:" or ("Active player buffs matching '" .. filter .. "':"))
+  local matched, hidden, restricted = 0, 0, false
+  for i = 1, BUFF_MAX_DISPLAY do
+    -- 12.1: index-based aura reads Lua-error for addons while auras are
+    -- secret (combat, encounters, M+, PvP). Catch it and say so instead.
+    local readOk, a = pcall(C_UnitAuras.GetBuffDataByIndex, "player", i)
+    if not readOk then
+      restricted = true
+      break
     end
-
-  elseif cmd == "help" then
-    PrintHelp()
-
-  elseif cmd == "version" then
-    Message("v" .. VERSION)
-
-  elseif cmd == "status" then
-    PrintStatus()
-
-  elseif cmd == "scan" then
-    local filter = rest and rest:lower():trim() or ""
-    Message(filter == "" and "Active player buffs:" or ("Active player buffs matching '" .. filter .. "':"))
-    local matched, hidden, restricted = 0, 0, false
-    for i = 1, BUFF_MAX_DISPLAY do
-      -- 12.1: index-based aura reads Lua-error for addons while auras are
-      -- secret (combat, encounters, M+, PvP). Catch it and say so instead.
-      local readOk, a = pcall(C_UnitAuras.GetBuffDataByIndex, "player", i)
-      if not readOk then
-        restricted = true
-        break
-      end
-      if a then
-        local ok, isMatch = pcall(function()
-          local name = a.name
-          if type(name) ~= "string" then return false end
-          local nameLower = name:lower()
-          if filter ~= "" and not nameLower:find(filter, 1, true) then return false end
-          local spellId = tonumber(a.spellId) or 0
-          local stacks = tonumber(a.applications) or 0
-          Message(string.format("  [%d] |cFFFFFFFF%s|r — id=|cFFFFFF00%d|r, stacks=|cFF00FF00%d|r",
-            i, name, spellId, stacks))
-          return true
-        end)
-        if ok and isMatch then
-          matched = matched + 1
-        elseif not ok then
-          hidden = hidden + 1
-        end
+    if a then
+      local ok, isMatch = pcall(function()
+        local name = a.name
+        if type(name) ~= "string" then return false end
+        local nameLower = name:lower()
+        if filter ~= "" and not nameLower:find(filter, 1, true) then return false end
+        local spellId = tonumber(a.spellId) or 0
+        local stacks = tonumber(a.applications) or 0
+        Message(string.format("  [%d] |cFFFFFFFF%s|r: id=|cFFFFFF00%d|r, stacks=|cFF00FF00%d|r",
+          i, name, spellId, stacks))
+        return true
+      end)
+      if ok and isMatch then
+        matched = matched + 1
+      elseif not ok then
+        hidden = hidden + 1
       end
     end
-    if restricted then
-      Message("  |cFFFF8800Aura data is hidden right now (combat, encounter, Mythic+, or PvP). Try again outside.|r")
-    elseif matched == 0 and hidden == 0 then
-      Message("  (no matching buffs)")
-    elseif hidden > 0 then
-      Message(string.format("  |cFF888888(%d private aura(s) skipped)|r", hidden))
-    end
-
-  elseif cmd == "channel" then
-    local arg = (rest or ""):lower():trim()
-    if arg == "" then
-      local cur = Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog"
-      Message(string.format("Audio channel: |cFFFFFFFF%s|r. Use |cFFFFFFFF/af channel dialog|master|sfx|r to change.", cur))
-    elseif ApexFury.SOUND_CHANNEL_ALIASES[arg] then
-      local channel = ApexFury.SOUND_CHANNEL_ALIASES[arg]
-      Config.Set(Config.Options.SOUND_CHANNEL, channel)
-      Message("Audio channel set to |cFFFFFFFF" .. channel .. "|r.")
-    else
-      Message("Unknown channel '" .. arg .. "'. Valid: |cFFFFFFFFdialog|master|sfx|r.")
-    end
-
-  elseif cmd == "reset" then
-    Config.Reset()
-    Message("All settings restored to defaults.")
-
-  elseif cmd == "debug" then
-    if ApexFuryDebugWindow then
-      ApexFuryDebugWindow:SetShown(not ApexFuryDebugWindow:IsShown())
-    else
-      Message("Debug window not initialized.")
-    end
-
-  elseif cmd == "overlay" or cmd == "show" then
-    if ApexFury.Overlay and ApexFury.Overlay.Toggle then
-      ApexFury.Overlay.Toggle()
-    end
-
-  else
-    Message("Unknown command: " .. cmd .. ". Type |cFFFFFFFF/af help|r for a list.")
+  end
+  if restricted then
+    Message("  |cFFFF8800Aura data is hidden right now (combat, encounter, Mythic+, or PvP). Try again outside.|r")
+  elseif matched == 0 and hidden == 0 then
+    Message("  (no matching buffs)")
+  elseif hidden > 0 then
+    Message(string.format("  |cFF888888(%d private aura(s) skipped)|r", hidden))
   end
 end
 
-SlashCmdList["APEXFURY"] = HandleSlashCommand
+local function SetChannel(rest)
+  local Config = ApexFury.Config
+  local arg = (rest or ""):lower():trim()
+  if arg == "" then
+    local cur = Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog"
+    Message(string.format("Audio channel: |cFFFFFFFF%s|r. Use |cFFFFFFFF/af channel dialog|master|sfx|r to change.", cur))
+  elseif ApexFury.SOUND_CHANNEL_ALIASES[arg] then
+    local channel = ApexFury.SOUND_CHANNEL_ALIASES[arg]
+    Config.Set(Config.Options.SOUND_CHANNEL, channel)
+    Message("Audio channel set to |cFFFFFFFF" .. channel .. "|r.")
+  else
+    Message("Unknown channel '" .. arg .. "'. Valid: |cFFFFFFFFdialog|master|sfx|r.")
+  end
+end
+
+local function ToggleDebugWindow()
+  if ApexFury.DebugWindow then
+    ApexFury.DebugWindow:Toggle()
+  else
+    Message("Debug window not initialized.")
+  end
+end
+
+local function ToggleOverlay()
+  if ApexFury.Overlay and ApexFury.Overlay.Toggle then
+    ApexFury.Overlay.Toggle()
+  end
+end
+
+-- "/af" is listed first so the generated help shows it as the primary alias.
+CobySuite_ApexFury.Slash.Register({
+  key      = "APEXFURY",
+  slashes  = { "/af", "/apexfury", "/apex" },
+  title    = "ApexFury",
+  version  = VERSION,
+  message  = Message,
+  onEmpty  = ToggleSettings,   -- bare /af opens the settings window (most common entry point)
+  footer   = { "|cFF808080(All other settings live in the GUI, open with /af)|r" },
+  commands = {
+    { name = "settings", aliases = { "options", "config" },
+      help = "Open the settings window (bare /af does the same)", run = ToggleSettings },
+    { name = "status", help = "Print the current settings and the talent check to chat", run = PrintStatus },
+    { name = "scan", usage = "scan [name]", help = "List active player buffs (find spell IDs)", run = ScanBuffs },
+    { name = "overlay", aliases = { "show" }, help = "Open or close the on-screen status overlay", run = ToggleOverlay },
+    { name = "debug", help = "Open or close the debug log window", run = ToggleDebugWindow },
+    { name = "channel", usage = "channel [dialog|master|sfx]", help = "Show or change the audio channel", run = SetChannel },
+    { name = "reset", help = "Restore all settings to defaults", run = function()
+      ApexFury.Config.Reset()
+      Message("All settings restored to defaults.")
+    end },
+    -- Development only: the suites are stripped from release builds, and
+    -- available() hides the command from help there
+    { name = "test", usage = "test [suite]", help = "Open the in-game test window, optionally running one suite",
+      available = function() return ApexFury.Tests ~= nil end,
+      run = function(rest)
+        local tests = ApexFury.Tests
+        if not tests then
+          Message("Tests are not loaded.")
+          return
+        end
+        tests.Window:Show()
+        local suite = rest and rest:match("^%s*(%S+)")
+        if suite then
+          tests.RunSuite(suite)
+        end
+      end },
+  },
+})
 
 -------------------------------------------------------------------------------
 -- Startup sequence
@@ -246,6 +253,6 @@ startupFrame:SetScript("OnEvent", function(_, event, arg1)
         .. "or run |cFFFFFFFF/af channel master|r to switch.")
     end
 
-    ApexFury.Debug.Log("INIT", "PLAYER_LOGIN — watcher started, talent gate armed")
+    ApexFury.Debug.Log("INIT", "PLAYER_LOGIN: watcher started, talent gate armed")
   end
 end)

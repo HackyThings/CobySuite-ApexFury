@@ -1,15 +1,16 @@
 -------------------------------------------------------------------------------
--- CobySuite.Sound — unified sound catalog, resolution, and playback.
+-- CobySuite.Sound: unified sound catalog, resolution, and playback.
 --
--- Consolidates the Blizzard SoundKit catalog, LibSharedMedia (LSM)
--- registry, and Leatrix Sounds' bundled FileDataID database into a
--- single namespace consumer addons can browse, resolve, and play
--- against.
+-- Consolidates the Blizzard SoundKit catalog and the LibSharedMedia (LSM)
+-- registry into a single namespace consumer addons can browse, resolve,
+-- and play against.
 --
 -- Storage formats (what consumers persist into their config):
 --   number 8960              → Blizzard SoundKit ID  (PlaySound)
 --   string "8960"            → SoundKit ID as string (PlaySound)
---   string "fdid:538903"     → Blizzard FileDataID   (PlaySoundFile)
+--   string "fdid:538903"     → Blizzard FileDataID   (PlaySoundFile); not in
+--                              the catalog: a consumer picks it elsewhere and
+--                              keeps its own label for LookupLabel
 --   string "lsm:Glass Break" → LibSharedMedia entry  (PlaySoundFile via path)
 --
 -- Each entry exposed via Sound.GetEntries returns:
@@ -18,24 +19,29 @@
 --
 -- where:
 --   label   string  display name (may contain |c color codes from LSM)
---   value   any     storage form for Config.Set (one of the 4 above)
---   source  string  top-level source ("Blizzard"/"LibSharedMedia"/"Leatrix")
---   pack    string  sub-source — for Blizzard: "UI"/"Voice"/"Combat"/"Item"/
---                   "Alert"/"Effect"; for LSM: auto-derived from the addon
+--   value   any     storage form for Config.Set (a SoundKit ID or "lsm:Name")
+--   source  string  top-level source ("Blizzard"/"LibSharedMedia")
+--   pack    string  sub-source: for Blizzard "UI"/"Voice"/"Combat"/"Item"/
+--                   "Alert"/"Effect"; for LSM auto-derived from the addon
 --                   folder name in the file path (e.g. "Astral", "Causese",
---                   "ElvUI"; "Other LSM" if path has no AddOns segment);
---                   nil otherwise
---   kind    string  "SoundKit"/"FileDataID"/"LSM"
---   raw     any     numeric ID, file path, or LSM name (whatever Play needs)
---   path    string  filesystem path when known (LSM/Leatrix) — for tooltips
+--                   "ElvUI"; "Other LSM" if path has no AddOns segment)
+--   kind    string  "SoundKit"/"LSM"
+--   raw     any     numeric ID or file path (whatever Play needs)
+--   path    string  filesystem path when known (LSM), for tooltips
+--
+-- Source names (GetSourceList, GetSourceCount, GetSourceCounts) are
+-- "Blizzard: <pack>" for each Blizzard pack with sounds and the LSM pack
+-- names, sorted, with "Other LSM" last. Their counts come from one snapshot
+-- per catalog generation (one SOUNDKIT pass and one LSM pass), so a menu
+-- that asks for every count on every open repeats no scan.
 -------------------------------------------------------------------------------
 
-CobySuite = CobySuite or {}
-CobySuite.Sound = CobySuite.Sound or {}
-local Sound = CobySuite.Sound
+CobySuite_ApexFury = CobySuite_ApexFury or {}
+CobySuite_ApexFury.Sound = CobySuite_ApexFury.Sound or {}
+local Sound = CobySuite_ApexFury.Sound
 
 ---------------------------------------------------------------------------
--- Source colors — used by browsers/UI to color-code source pills. Hex
+-- Source colors, used by browsers/UI to color-code source pills. Hex
 -- color codes (no |c prefix). Consumers that need decimal values can
 -- divide by 255.
 ---------------------------------------------------------------------------
@@ -48,14 +54,13 @@ Sound.SourceColors = {
   ["Blizzard: Alert"]   = "FFAA40",
   ["Blizzard: Effect"]  = "FFD200",
   LibSharedMedia    = "8AD4FF",
-  Leatrix           = "B58AFF",
   Astral            = "A335EE",   -- matches Astral's own |c prefix
   Causese           = "FF7777",
   Other             = "AAAAAA",
 }
 
 ---------------------------------------------------------------------------
--- SOUNDKIT exclusion — entries we never expose because they aren't
+-- SOUNDKIT exclusion: entries we never expose because they aren't
 -- useful as alert sounds (music tracks, ambient soundscapes). Voice
 -- clips ARE included as a separate pack so they can be browsed.
 ---------------------------------------------------------------------------
@@ -88,14 +93,14 @@ end
 -- Blizzard sub-pack classification by name pattern
 --
 -- ~800 SOUNDKIT entries split into ~6 buckets so users don't drown in
--- one mega-list. Order matters — most specific category first; first
+-- one mega-list. Order matters: most specific category first; first
 -- match wins.
 ---------------------------------------------------------------------------
 local function ClassifyBlizzardName(name)
   if type(name) ~= "string" then return "Effect" end
 
   -- Voice (most specific). SOUNDKIT genuinely has very little voice
-  -- content — boss/NPC speech is FileDataID-based (Leatrix's territory).
+  -- content: boss/NPC speech is FileDataID-based, outside SOUNDKIT.
   -- Anchored prefixes only to avoid false positives.
   if name:find("VOICEOVER", 1, true)
      or name:sub(1, 3) == "VO_"
@@ -107,7 +112,7 @@ local function ClassifyBlizzardName(name)
     return "Voice"
   end
 
-  -- Item / economy — check BEFORE UI so things like LOOT_OPEN, BAG_CLOSE,
+  -- Item / economy: check BEFORE UI so things like LOOT_OPEN, BAG_CLOSE,
   -- AUCTION_WINDOW_OPEN go to Item rather than getting swallowed by UI's
   -- generic _OPEN/_CLOSE patterns.
   if name:find("AUCTION", 1, true)
@@ -144,7 +149,7 @@ local function ClassifyBlizzardName(name)
     return "Combat"
   end
 
-  -- System alerts — also before UI so READY_CHECK_*_OPEN doesn't end up UI
+  -- System alerts: also before UI so READY_CHECK_*_OPEN doesn't end up UI
   if name:find("ALARM", 1, true)
      or name:find("READY_CHECK", 1, true)
      or name:find("RAID_", 1, true)
@@ -176,7 +181,7 @@ local function ClassifyBlizzardName(name)
   return "Effect"
 end
 
--- Iconic sounds not in SOUNDKIT global — explicit IDs needed.
+-- Iconic sounds not in SOUNDKIT global: explicit IDs needed.
 local EXTRA_BLIZZARD_SOUNDS = {
   { id = 12889, label = "Raid Warning Horn",     pack = "Alert"  },
   { id = 12867, label = "LFG Reward",            pack = "Alert"  },
@@ -200,7 +205,7 @@ local EXTRA_BLIZZARD_SOUNDS = {
 ---------------------------------------------------------------------------
 -- LSM pack classification
 --
--- LSM doesn't expose which addon registered which sound — only the
+-- LSM doesn't expose which addon registered which sound, only the
 -- (name, path) pair. So we parse the addon folder name out of the
 -- path (every well-formed LSM sound path is under
 -- Interface\AddOns\<FolderName>\...). Universal coverage: any pack
@@ -242,8 +247,7 @@ local function GetLSM()
 end
 
 -- Strip WoW |cAARRGGBB...|r color codes. Fast-path skips work when
--- there's no color code — which is true for all Blizzard SoundKit names
--- and most Leatrix paths.
+-- there's no color code, which is true for all Blizzard SoundKit names.
 function Sound.StripColors(s)
   if type(s) ~= "string" then return "" end
   if not s:find("|c", 1, true) then return s end
@@ -275,57 +279,12 @@ local function GetSoundKitNamesById()
   return soundKitNamesById
 end
 
----------------------------------------------------------------------------
--- Leatrix Sounds index (FileDataID → path)
----------------------------------------------------------------------------
-local leatrixIndex
-local leatrixEntriesRaw  -- list of {fdid, path, kind}
-
-local function BuildLeatrixIndex()
-  leatrixIndex = {}
-  leatrixEntriesRaw = {}
-  local lx = _G.Leatrix_Sounds
-  if type(lx) ~= "table" then return end
-
-  for _, listKey in ipairs({ "OGG", "MP3", "EXT" }) do
-    local list = lx[listKey]
-    if type(list) == "table" then
-      for _, entry in ipairs(list) do
-        if type(entry) == "string" then
-          local path, idStr = entry:match("^(.+)#(%d+)$")
-          if path and idStr then
-            local fdid = tonumber(idStr)
-            if fdid and not leatrixIndex[fdid] then
-              leatrixIndex[fdid] = path
-              table.insert(leatrixEntriesRaw, { fdid = fdid, path = path, kind = listKey })
-            end
-          end
-        end
-      end
-    end
-  end
-end
-
-local function GetLeatrixIndex()
-  if not leatrixIndex then BuildLeatrixIndex() end
-  return leatrixIndex
-end
-
-local function GetLeatrixEntriesRaw()
-  if not leatrixEntriesRaw then BuildLeatrixIndex() end
-  return leatrixEntriesRaw
-end
-
-function Sound.IsLeatrixAvailable()
-  return type(_G.Leatrix_Sounds) == "table"
-end
-
 function Sound.IsLSMAvailable()
   return GetLSM() ~= nil
 end
 
 ---------------------------------------------------------------------------
--- Entry construction helpers — pre-compute sort keys so subsequent
+-- Entry construction helpers: pre-compute sort keys so subsequent
 -- sort/filter passes don't re-do StripColors/lower per comparison.
 ---------------------------------------------------------------------------
 local function MakeEntry(label, value, source, pack, kind, raw, path)
@@ -392,7 +351,7 @@ local function BuildLSMEntries()
   local LSM = GetLSM()
   if not LSM then return entries end
 
-  -- LSM:HashTable returns the internal name→path map directly — one
+  -- LSM:HashTable returns the internal name→path map directly: one
   -- table reference instead of N Fetch calls.
   local hash = LSM:HashTable("sound") or {}
   for name, path in pairs(hash) do
@@ -404,60 +363,56 @@ local function BuildLSMEntries()
   return entries
 end
 
-local function BuildLeatrixEntriesUnified()
-  local entries = {}
-  local list = GetLeatrixEntriesRaw() or {}
-  for i = 1, #list do
-    local e = list[i]
-    table.insert(entries,
-      MakeEntry(e.path, "fdid:" .. e.fdid, "Leatrix", e.kind, "FileDataID", e.fdid, e.path))
-  end
-  return entries
-end
-
 ---------------------------------------------------------------------------
--- Module-level entry cache
+-- Module-level caches
 --
 -- Building 800+ Blizzard + 400+ LSM entries takes work; caching the
--- result avoids redoing it on every browser:Refresh(). Two cache slots
--- (with/without Leatrix) since Leatrix is opt-in. The cache lives for
--- the session — LSM packs and Leatrix register at addon load and don't
--- change at runtime.
+-- result avoids redoing it on every browser:Refresh(). The per-source
+-- counts are a snapshot of their own, so a source menu never builds
+-- entries. A pack can register sounds after the catalog was built, so a
+-- registration empties both and bumps the catalog generation (see the
+-- watcher at the end of this file); browsers compare the generation on
+-- Refresh.
 ---------------------------------------------------------------------------
-local cachedNoLeatrix
-local cachedWithLeatrix
+local cachedEntries
+local countSnapshot       -- { generation, sources, counts, total, blizzardTotal }
+local countBuilds = 0
+local catalogGeneration = 0
 
-local function BuildAll(includeLeatrix)
-  local out = {}
-  for _, e in ipairs(BuildBlizzardEntries()) do table.insert(out, e) end
-  for _, e in ipairs(BuildLSMEntries())      do table.insert(out, e) end
-  if includeLeatrix then
-    for _, e in ipairs(BuildLeatrixEntriesUnified()) do table.insert(out, e) end
-  end
-  return out
+-- Empties every catalog cache, so the next lookup rebuilds from the
+-- sources as they are now
+local function InvalidateCatalog()
+  catalogGeneration = catalogGeneration + 1
+  cachedEntries = nil
+  countSnapshot = nil
+end
+
+Sound.InvalidateCatalog = InvalidateCatalog
+
+-- Changes whenever the catalog is invalidated; compare, never interpret
+function Sound.GetCatalogGeneration()
+  return catalogGeneration
 end
 
 ---------------------------------------------------------------------------
 -- Public catalog API
 ---------------------------------------------------------------------------
 
+-- Every catalog entry, Blizzard then LSM. opts is accepted and ignored
+-- (callers once chose an optional extra source here).
 function Sound.GetEntries(opts)
-  opts = opts or {}
-  if opts.includeLeatrix then
-    if not cachedWithLeatrix then cachedWithLeatrix = BuildAll(true) end
-    return cachedWithLeatrix
+  if not cachedEntries then
+    local out = {}
+    for _, e in ipairs(BuildBlizzardEntries()) do table.insert(out, e) end
+    for _, e in ipairs(BuildLSMEntries())      do table.insert(out, e) end
+    cachedEntries = out
   end
-  if not cachedNoLeatrix then cachedNoLeatrix = BuildAll(false) end
-  return cachedNoLeatrix
+  return cachedEntries
 end
 
--- Sub-pack list helpers — used by browser source-filter dropdowns
--- to enumerate visible packs without materializing the full entry list.
-
+-- Per-pack counts of the Blizzard catalog, without building entries (the
+-- same seen/exclusion rules as BuildBlizzardEntries)
 local function ListBlizzardPacks()
-  -- Probe via a fast iteration of SOUNDKIT names so we know which
-  -- Blizzard packs actually have content (also includes counts from
-  -- EXTRA_BLIZZARD_SOUNDS).
   local counts = { UI = 0, Voice = 0, Combat = 0, Item = 0, Alert = 0, Effect = 0 }
   local seen = {}
 
@@ -483,8 +438,7 @@ local function ListBlizzardPacks()
   return counts
 end
 
--- ListLSMPacks — fast scan of LSM:HashTable to count entries per pack.
--- Used by GetSourceList / GetSourceCount without materializing entries.
+-- Per-pack counts of LSM:HashTable, without building entries
 local function ListLSMPacks()
   local counts = {}
   local LSM = GetLSM()
@@ -497,57 +451,86 @@ local function ListLSMPacks()
   return counts
 end
 
--- GetSourceList — names of sources/packs available right now, ordered
--- for menu rendering. Each entry is the canonical name a consumer can
--- pass to GetEntriesBySource / GetSourceCount.
-function Sound.GetSourceList()
-  local out = {}
+local BLIZZARD_PACK_ORDER = { "UI", "Combat", "Voice", "Item", "Alert", "Effect" }
 
-  -- Blizzard sub-packs (only show ones with entries)
+-- The source names and their counts for this catalog generation: built on
+-- first use after an invalidation, from one pass over each catalog
+local function GetCountSnapshot()
+  if countSnapshot and countSnapshot.generation == catalogGeneration then
+    return countSnapshot
+  end
+  countBuilds = countBuilds + 1
+
+  local sources, counts, total, blizzardTotal = {}, {}, 0, 0
+
   local blizCounts = ListBlizzardPacks()
-  local PACK_ORDER = { "UI", "Combat", "Voice", "Item", "Alert", "Effect" }
-  for _, pack in ipairs(PACK_ORDER) do
-    if (blizCounts[pack] or 0) > 0 then
-      table.insert(out, "Blizzard: " .. pack)
+  for _, pack in ipairs(BLIZZARD_PACK_ORDER) do
+    local n = blizCounts[pack] or 0
+    if n > 0 then
+      local name = "Blizzard: " .. pack
+      sources[#sources + 1] = name
+      counts[name] = n
+      total = total + n
+      blizzardTotal = blizzardTotal + n
     end
   end
 
-  -- LSM packs auto-discovered from paths
   local lsmCounts = ListLSMPacks()
   local lsmNames = {}
   for name in pairs(lsmCounts) do
-    if name ~= "Other LSM" then table.insert(lsmNames, name) end
+    if name ~= "Other LSM" then lsmNames[#lsmNames + 1] = name end
   end
   table.sort(lsmNames, function(a, b) return a:lower() < b:lower() end)
-  for _, n in ipairs(lsmNames) do table.insert(out, n) end
-  if lsmCounts["Other LSM"] then table.insert(out, "Other LSM") end
-
-  if Sound.IsLeatrixAvailable() then
-    table.insert(out, "Leatrix")
+  if lsmCounts["Other LSM"] then lsmNames[#lsmNames + 1] = "Other LSM" end
+  for _, name in ipairs(lsmNames) do
+    sources[#sources + 1] = name
+    counts[name] = lsmCounts[name]
+    total = total + lsmCounts[name]
   end
 
+  countSnapshot = {
+    generation = catalogGeneration,
+    sources = sources,
+    counts = counts,
+    total = total,
+    blizzardTotal = blizzardTotal,
+  }
+  return countSnapshot
+end
+
+-- GetSourceList: names of sources/packs available right now, ordered for
+-- menu rendering (a copy; each name works with GetSourceCount)
+function Sound.GetSourceList()
+  local snapshot = GetCountSnapshot()
+  local out = {}
+  for i, name in ipairs(snapshot.sources) do out[i] = name end
   return out
 end
 
--- GetSourceCount — fast count without materializing the entry list.
+-- GetSourceCount: one source's count ("Blizzard" sums its packs), from the
+-- snapshot
 function Sound.GetSourceCount(name)
   if not name then return 0 end
+  local snapshot = GetCountSnapshot()
+  if name == "Blizzard" then return snapshot.blizzardTotal end
+  return snapshot.counts[name] or 0
+end
 
-  if name:sub(1, 10) == "Blizzard: " then
-    local pack = name:sub(11)
-    local counts = ListBlizzardPacks()
-    return counts[pack] or 0
-  elseif name == "Blizzard" then
-    local total, counts = 0, ListBlizzardPacks()
-    for _, n in pairs(counts) do total = total + n end
-    return total
-  elseif name == "Leatrix" then
-    local list = GetLeatrixEntriesRaw()
-    return list and #list or 0
+-- GetSourceCounts: sources (ordered), counts[name] and the total of every
+-- source, all copies, from one snapshot
+function Sound.GetSourceCounts()
+  local snapshot = GetCountSnapshot()
+  local sources, counts = {}, {}
+  for i, name in ipairs(snapshot.sources) do
+    sources[i] = name
+    counts[name] = snapshot.counts[name]
   end
-  -- Treat as LSM pack name
-  local counts = ListLSMPacks()
-  return counts[name] or 0
+  return sources, counts, snapshot.total
+end
+
+-- For tests: how many times the count snapshot was built this session
+function Sound.GetCatalogStats()
+  return { countBuilds = countBuilds }
 end
 
 ---------------------------------------------------------------------------
@@ -572,7 +555,9 @@ function Sound.Resolve(value)
   if lsmName then
     local LSM = GetLSM()
     if not LSM then return "lsm_missing", lsmName, ("LSM (unavailable): %s"):format(lsmName) end
-    local path = LSM:Fetch("sound", lsmName)
+    -- noDefault: without it LSM hands back its default sound for a name it
+    -- does not have, and a removed pack would look like a valid choice
+    local path = LSM:Fetch("sound", lsmName, true)
     if not path then return "lsm_missing", lsmName, ("LSM (unknown): %s"):format(lsmName) end
     return "lsm", path, lsmName
   end
@@ -587,7 +572,7 @@ local MAX_PLAYBACK_SECONDS = 10
 local FADEOUT_MS = 400
 
 -- Returns (handle, willPlay). willPlay is the boolean PlaySound/PlaySoundFile
--- returns first — false means the WoW mixer rejected the dispatch (channel
+-- returns first; false means the WoW mixer rejected the dispatch (channel
 -- saturation under heavy combat is the typical cause). Callers that need
 -- to know whether audio actually went out should treat
 -- (willPlay and handle) as the success signal; handle alone can be valid
@@ -625,6 +610,9 @@ local function GetBlizzardLabelByValue()
   return blizzardLabelByValue
 end
 
+-- The catalog label, else a SOUNDKIT name, else savedLabel (the label a
+-- consumer kept for a value outside the catalog, such as "fdid:N"), else
+-- Resolve's description
 function Sound.LookupLabel(value, savedLabel)
   local label = GetBlizzardLabelByValue()[value]
   if label then return label end
@@ -635,18 +623,34 @@ function Sound.LookupLabel(value, savedLabel)
     if skName then return PrettifyName(skName) end
   end
 
-  -- Leatrix path lookup for "fdid:N"
-  if type(value) == "string" then
-    local fdid = value:match("^fdid:(%d+)$")
-    if fdid then
-      local path = GetLeatrixIndex()[tonumber(fdid)]
-      if path then return path end
-    end
-  end
-
   if savedLabel and savedLabel ~= "" then return savedLabel end
 
   local _, _, fallback = Sound.Resolve(value)
   return fallback
 end
 
+---------------------------------------------------------------------------
+-- Catalog freshness. LibSharedMedia announces every registration through
+-- its LibSharedMedia_Registered callback, hooked as soon as the library is
+-- present (which may be after this file loads); each sound registration
+-- invalidates the catalog. Once hooked, ADDON_LOADED is no longer needed.
+---------------------------------------------------------------------------
+local lsmHooked = false
+local watchFrame = CreateFrame("Frame")
+
+local function WatchSources()
+  if lsmHooked then return end
+  local LSM = GetLSM()
+  if LSM and LSM.RegisterCallback then
+    LSM.RegisterCallback(Sound, "LibSharedMedia_Registered", function(_, mediaType)
+      if mediaType == "sound" then InvalidateCatalog() end
+    end)
+    lsmHooked = true
+    watchFrame:UnregisterEvent("ADDON_LOADED")
+    InvalidateCatalog()   -- sounds registered before the hook existed
+  end
+end
+
+watchFrame:RegisterEvent("ADDON_LOADED")
+watchFrame:SetScript("OnEvent", WatchSources)
+WatchSources()

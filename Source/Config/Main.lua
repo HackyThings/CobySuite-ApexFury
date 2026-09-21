@@ -28,9 +28,9 @@ end
 ---------------------------------------------------------------------------
 -- Shared config base via CobySuite.Config.New
 ---------------------------------------------------------------------------
-local base = CobySuite.Config.New({
+local base = CobySuite_ApexFury.Config.New({
   savedVariable = "APEX_FURY_CONFIG",
-  -- High-traffic UI-driven keys — exclude from CONFIG.Set logging so
+  -- High-traffic UI-driven keys: exclude from CONFIG.Set logging so
   -- browsing the 1000-entry sound picker doesn't flood the debug log.
   quietKeys = QUIET_KEYS,
   options = {
@@ -71,11 +71,35 @@ local base = CobySuite.Config.New({
     ["enabled"]          = true,
     ["verbose"]          = false,
   },
+  -- Set refuses a failing value and InitializeData puts the default back for
+  -- a failing saved one (a hand-edited or damaged file). The ranges are the
+  -- widest the settings window has ever allowed, 1.0.2 included, so nothing a
+  -- player saved through the UI is reset; the window's own checks stay
+  -- stricter (an interval above 0). sound_id has no rule: it is a number or
+  -- a string, by source.
+  validate = {
+    ["spell_id"]           = { type = "number", min = 1, integer = true },
+    ["threshold"]          = { type = "number", min = 1, max = 99, integer = true },
+    ["stack_interval"]     = { type = "number", min = 0.001, max = 60 },
+    ["linger_per_stack"]   = { type = "number", min = 0, max = 600 },
+    ["linger_max"]         = { type = "number", min = 0, max = 600 },
+    ["max_stacks"]         = { type = "number", min = 1, max = 99, integer = true },
+    ["combat_only"]        = { type = "boolean" },
+    ["actionability_gate"] = { type = "boolean" },
+    ["min_remaining"]      = { type = "number", min = 0, max = 60 },
+    ["sound_label"]        = { type = "string" },
+    ["sound_channel"]      = { type = "string", values = ApexFury.SOUND_CHANNELS },
+    ["enabled"]            = { type = "boolean" },
+    ["verbose"]            = { type = "boolean" },
+  },
   debug = ApexFury.Debug,
   onSet = function(name, old, value)
     if ApexFury.Watcher and ApexFury.Watcher.OnConfigChanged then
       ApexFury.Watcher.OnConfigChanged(name, old, value)
     end
+    -- An open settings window repaints the setting (/af channel); defined
+    -- by Config/Window.lua, since this addon has no config event bus
+    if Config.NotifySettingsWindow then Config.NotifySettingsWindow(name) end
     if name and not QUIET_LOOKUP[name] then
       LogConfigSnapshot()
     end
@@ -84,11 +108,14 @@ local base = CobySuite.Config.New({
     if ApexFury.Watcher and ApexFury.Watcher.OnConfigChanged then
       ApexFury.Watcher.OnConfigChanged()
     end
+    if Config.NotifySettingsWindow then Config.NotifySettingsWindow() end
     LogConfigSnapshot()
   end,
 })
 
 Config.Options       = base.Options
+Config.Defaults      = base.Defaults     -- the settings window's Defaults button stages these
+Config.CheckValue    = base.CheckValue
 Config.Get           = base.Get
 Config.Set           = base.Set
 Config.Reset         = base.Reset

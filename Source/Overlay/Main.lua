@@ -1,10 +1,15 @@
 ﻿-------------------------------------------------------------------------------
--- ApexFury Overlay — movable on-screen status frame
+-- ApexFury Overlay: movable on-screen status frame
 --
 -- Seven tooltipped status lines for live verification of the watcher's
--- decision-making: status / DR remaining / empowers + projected stacks /
--- fired-after offset / last-alert-ago / live verdict / talent gate.
--- See LINE_TOOLTIPS below for per-line descriptions.
+-- decision-making: status / DR remaining / empowers + stacks reached and
+-- projected / fired-after offset / last-alert-ago / live verdict / talent
+-- gate. See LINE_TOOLTIPS below for per-line descriptions.
+--
+-- Everything shown comes from Watcher.GetState(); the overlay makes no aura
+-- API calls, so its 0.1s OnUpdate never touches aura data, which would taint
+-- this addon's execution. The "DR remain (read)" value is the watcher's one-shot
+-- out-of-combat read.
 --
 -- Position is persisted in APEX_FURY_UI_STATE.overlay.
 -------------------------------------------------------------------------------
@@ -13,18 +18,17 @@ local Overlay = ApexFury.Overlay
 
 local frame
 local lines = {}
-local U = CobySuite.Utilities
-local UI = CobySuite.UI
-local TC = U.Colors
+local U = CobySuite_ApexFury.Utilities
+local UI = CobySuite_ApexFury.UI
 
 local LINE_TOOLTIPS = {
-  [1] = "Tracking state. Counts down to alert fire while DR is active. PENDING = timer fired out of combat and is waiting for combat re-entry. fired/suppressed/idle resolve once the cycle completes.",
-  [2] = "Time remaining for Dragonrage (or the Rising Fury linger after DR drops). Out of combat: read directly from the aura. In combat: estimated via the predictive model from cast time + Animosity empower extensions.",
-  [3] = "Empower spells (Fire Breath / Eternity Surge) cast since this Dragonrage, plus the projected Rising Fury stack count at the moment DR drops. Each empower extends DR via Animosity (+5s, 25% diminishing per cast).",
+  [1] = "Tracking state. Counts down to alert fire while DR is active. PENDING = timer fired out of combat and is waiting for combat re-entry. HOLD = at the alert moment Dragonrage looked too short, so the alert waits half a second for an empower that arrives late. fired/suppressed/idle resolve once the cycle completes.",
+  [2] = "Time remaining for Dragonrage (or the Rising Fury linger after DR drops). (read) = Dragonrage's own timer, read once out of combat just after the cast and after each empower. Otherwise, and always in combat: estimated via the predictive model from cast time + Animosity empower extensions.",
+  [3] = "Empower spells (Fire Breath / Eternity Surge) cast since this Dragonrage, the Rising Fury stacks reached so far, and in brackets the stacks projected for the moment DR drops (it grows as empowers extend DR). Each empower extends DR via Animosity (+5s, 25% diminishing per cast).",
   [4] = "Exact elapsed seconds from the Dragonrage cast to when the alert sound played (or was suppressed). Frozen at the moment of resolution.",
   [5] = "How long ago the most recent alert sound played. Useful for verifying the cadence between Dragonrages.",
-  [6] = "Current verdict — what the watcher would do if the alert moment hit RIGHT NOW. Shows which gates would pass/fail (Rising Fury alive, DR duration ≥ threshold requirement, linger ≥ min_remaining). Helps explain unexpected suppressions.",
-  [7] = "Talent gate — addon prerequisites. Requires Devastation Evoker spec + Rising Fury rank ≥1. Animosity needed for threshold ≥4 (unextended Dragonrage caps at 3 stacks). When inactive, the watcher unregisters its events entirely.",
+  [6] = "Current verdict: what the watcher would do if the alert moment hit RIGHT NOW. Shows which gates would pass/fail (Rising Fury alive, DR duration ≥ threshold requirement, linger ≥ min_remaining). Helps explain unexpected suppressions.",
+  [7] = "Talent gate: addon prerequisites. Requires Devastation Evoker spec + Rising Fury rank ≥1. Animosity needed for threshold ≥4 (unextended Dragonrage caps at 3 stacks). When inactive, the watcher unregisters its events entirely.",
 }
 
 local NUM_LINES = 7
@@ -42,79 +46,16 @@ local DEFER_REASON_DISPLAY = {
 local DEFER_FALLBACK = { status = "waiting", verdict = "awaiting recovery" }
 
 ---------------------------------------------------------------------------
--- Best-effort read of an aura's remaining duration. expirationTime is
--- a secret value on private auras during combat — wrap in pcall and
--- gate on issecretvalue() before any comparison. Since 12.1 the whole
--- AuraData struct is secret while auras are restricted (combat,
--- encounters, M+, PvP), so bail before touching any field.
----------------------------------------------------------------------------
-local function SafeReadRemaining(a)
-  if not a then return nil end
-  if issecrettable and issecrettable(a) then return nil end
-  local ok, remaining = pcall(function()
-    local exp = a.expirationTime
-    if type(exp) ~= "number" then return nil end
-    if issecretvalue and issecretvalue(exp) then return nil end
-    if exp <= 0 then return nil end
-    return exp - GetTime()
-  end)
-  if ok and type(remaining) == "number" and remaining > 0 then
-    return remaining
-  end
-  return nil
-end
-
----------------------------------------------------------------------------
--- ReadTriggerRemaining: gated on out-of-combat. In-combat reads of
--- private aura fields can leave taint markers; the predictive model
--- handles the in-combat display.
---
--- 12.1: auras stay secret between pulls inside M+ / encounters even
--- though UnitAffectingCombat() is false. The spell-ID read then returns
--- a fully secret struct and instance-ID reads Lua-error, so both paths
--- bail out early instead of polling secret data every tick.
----------------------------------------------------------------------------
-local function ReadTriggerRemaining()
-  if UnitAffectingCombat("player") then return nil, nil end
-
-  local trackedID = ApexFury.Config.Get(ApexFury.Config.Options.SPELL_ID)
-  if not trackedID then return nil, nil end
-
-  local aura = C_UnitAuras.GetPlayerAuraBySpellID(trackedID)
-  if aura and issecrettable and issecrettable(aura) then return nil, nil end
-  local rem = SafeReadRemaining(aura)
-  if rem then return rem, "direct" end
-
-  local state = ApexFury.Watcher.GetState and ApexFury.Watcher.GetState() or nil
-  if state and state.capturedIDs then
-    local longest, source = nil, nil
-    for id in pairs(state.capturedIDs) do
-      local ok, a = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", id)
-      if not ok then break end -- auras restricted: every further read fails too
-      if a then
-        local r = SafeReadRemaining(a)
-        if r and (not longest or r > longest) then
-          longest = r
-          source = "inst:" .. tostring(id)
-        end
-      end
-    end
-    if longest then return longest, source end
-  end
-
-  return nil, nil
-end
-
----------------------------------------------------------------------------
--- Render line 7 — the talent gate status. Always shown.
+-- Render line 7: the talent gate status. Always shown.
 ---------------------------------------------------------------------------
 local function RenderGateLine(state)
   local reason = state.gateReason or "unknown"
   local detail = state.gateDetail or ""
   if reason == "ready" then
     lines[7]:SetText(string.format(
-      "|cFFCCCCCCGate:|r |cFF00FF00ready|r |cFF555555(RF rank %d, Animosity on)|r",
-      state.gateRisingFury or 0))
+      "|cFFCCCCCCGate:|r |cFF00FF00ready|r |cFF555555(RF rank %d, %s)|r",
+      state.gateRisingFury or 0,
+      state.gateAnimosity == nil and "Animosity assumed" or "Animosity on"))
   elseif reason == "no_animosity" then
     lines[7]:SetText(string.format(
       "|cFFCCCCCCGate:|r |cFFFFAA00active, max 3 stacks|r |cFF555555(no Animosity)|r"))
@@ -125,7 +66,7 @@ local function RenderGateLine(state)
   elseif reason == "wrong_class" then
     lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Cwrong class|r")
   elseif reason == "api_unavailable" then
-    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4CAPI unavailable|r |cFF555555(/reload to retry)|r")
+    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Ctalents not loaded|r |cFF555555(change talents or /reload)|r")
   else
     lines[7]:SetText("|cFFCCCCCCGate:|r |cFF888888" .. tostring(detail) .. "|r")
   end
@@ -140,10 +81,10 @@ local function RenderInactivePlaceholder(state)
   local detail = state.gateDetail or "Inactive"
   lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF888888inactive|r")
   lines[2]:SetText("|cFF888888" .. detail .. "|r")
-  lines[3]:SetText("|cFF888888—|r")
-  lines[4]:SetText("|cFF888888—|r")
-  lines[5]:SetText("|cFF888888—|r")
-  lines[6]:SetText("|cFF888888—|r")
+  lines[3]:SetText("|cFF888888--|r")
+  lines[4]:SetText("|cFF888888--|r")
+  lines[5]:SetText("|cFF888888--|r")
+  lines[6]:SetText("|cFF888888--|r")
   RenderGateLine(state)
 end
 
@@ -151,10 +92,11 @@ local function UpdateDisplay()
   if not frame or not frame:IsShown() then return end
 
   local state = ApexFury.Watcher.GetState and ApexFury.Watcher.GetState() or {}
-  local now = GetTime()
+  -- The watcher's clock, so the lines agree with its state (and its test clock)
+  local now = state.now or GetTime()
 
   -- Gate-closed path: addon prerequisites not met. Skip cycle rendering
-  -- entirely — the watcher isn't running, all the cycle fields are nil
+  -- entirely: the watcher isn't running, all the cycle fields are nil
   -- by design.
   if state.gateUsable == false then
     RenderInactivePlaceholder(state)
@@ -170,14 +112,18 @@ local function UpdateDisplay()
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[1]:SetText(string.format(
-        "|cFFCCCCCCStatus:|r |cFF888888EXPIRED — Rising Fury ended|r |cFF555555(%.1fs since cast)|r",
+        "|cFFCCCCCCStatus:|r |cFF888888EXPIRED: Rising Fury ended|r |cFF555555(%.1fs since cast)|r",
         elapsed))
     else
       local reasonText = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).status
       lines[1]:SetText(string.format(
-        "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING — %s|r |cFF555555(%.1fs since cast)|r",
+        "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING: %s|r |cFF555555(%.1fs since cast)|r",
         reasonText, elapsed))
     end
+  elseif state.provisionalUntil and not state.alertFired and not state.alertSuppressed then
+    lines[1]:SetText(string.format(
+      "|cFFCCCCCCStatus:|r |cFFFFAA00HOLD, waiting for a late empower|r |cFF555555(%.1fs)|r",
+      math.max(0, state.provisionalUntil - now)))
   elseif state.castTime and state.alertScheduledFor and not state.alertFired and not state.alertSuppressed then
     local remaining = math.max(0, state.alertScheduledFor - now)
     lines[1]:SetText(string.format(
@@ -192,17 +138,18 @@ local function UpdateDisplay()
     lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF888888idle|r")
   end
 
-  -- Line 2: trigger remaining — API-read first (out of combat only),
-  -- then predictive model, then linger model.
-  local apiRem, source = ReadTriggerRemaining()
+  -- Line 2: trigger remaining. The watcher's one-shot out-of-combat read
+  -- while it is still running, then the predictive model, then the linger
+  -- model. No aura API call here.
+  local observedRem = state.observedTriggerEnd and (state.observedTriggerEnd - now) or nil
   local lingerRem = state.estLingerRemaining
   local inCombat = UnitAffectingCombat("player")
   local empowers = state.empowerCount or 0
 
-  if apiRem then
+  if observedRem and observedRem > 0 then
     lines[2]:SetText(string.format(
-      "|cFFCCCCCCDR remain:|r |cFF00FFFF%.1fs|r |cFF555555(%s, %d empowers)|r",
-      apiRem, source or "", empowers))
+      "|cFFCCCCCCDR remain:|r |cFF00FFFF%.1fs|r |cFF555555(read, %d empowers)|r",
+      observedRem, empowers))
   elseif state.triggerDropTime and lingerRem and lingerRem ~= math.huge then
     lines[2]:SetText(string.format(
       "|cFFCCCCCCRF linger:|r |cFFFFFF00~%.1fs|r |cFF555555(model)|r", lingerRem))
@@ -212,20 +159,21 @@ local function UpdateDisplay()
       "|cFFCCCCCCDR pred:|r |cFFFFFF00~%.1fs|r |cFF555555(model, %d empowers)|r",
       predRem, empowers))
   else
-    lines[2]:SetText("|cFFCCCCCCDR remain:|r |cFF888888—|r")
+    lines[2]:SetText("|cFFCCCCCCDR remain:|r |cFF888888--|r")
   end
 
-  -- Line 3: empowers cast + projected stacks at DR drop + combat status
+  -- Line 3: empowers cast + stacks reached so far + stacks projected at the
+  -- predicted DR end + combat status
   local combatTag = inCombat and "|cFFFF6644[COMBAT]|r" or "|cFF888888[idle]|r"
   if state.castTime then
     lines[3]:SetText(string.format(
-      "|cFFCCCCCCEmpowers:|r |cFFFFFF00%d|r |cFFCCCCCC· stacks:|r |cFFFFFF00~%d|r %s",
-      state.empowerCount or 0, state.stacksAtDrop or 0, combatTag))
+      "|cFFCCCCCCEmpowers:|r |cFFFFFF00%d|r |cFFCCCCCC· stacks|r |cFFFFFF00~%d|r |cFF888888(~%d at DR end)|r %s",
+      state.empowerCount or 0, state.stacksReached or 0, state.projectedStacksAtDrop or 0, combatTag))
   else
-    lines[3]:SetText("|cFFCCCCCCEmpowers:|r |cFF888888—|r " .. combatTag)
+    lines[3]:SetText("|cFFCCCCCCEmpowers:|r |cFF888888--|r " .. combatTag)
   end
 
-  -- Line 4: precise verifiable timer — exactly when the sound played
+  -- Line 4: precise verifiable timer: exactly when the sound played
   -- relative to the trigger cast. Frozen at fire time, also shows
   -- suppression offset if alert was cancelled.
   if state.lastFiredOffset then
@@ -242,7 +190,7 @@ local function UpdateDisplay()
     lines[4]:SetText(string.format(
       "|cFFCCCCCCFired after:|r |cFFAAAAAA%.2fs elapsed...|r", elapsed))
   else
-    lines[4]:SetText("|cFFCCCCCCFired after:|r |cFF888888—|r")
+    lines[4]:SetText("|cFFCCCCCCFired after:|r |cFF888888--|r")
   end
 
   -- Line 5: relative "ago" reading for context
@@ -252,13 +200,13 @@ local function UpdateDisplay()
       lines[5]:SetText(string.format(
         "|cFFCCCCCCLast alert:|r |cFFFF8800%.0fs ago|r", agoSec))
     else
-      lines[5]:SetText("|cFFCCCCCCLast alert:|r |cFF888888—|r")
+      lines[5]:SetText("|cFFCCCCCCLast alert:|r |cFF888888--|r")
     end
   else
-    lines[5]:SetText("|cFFCCCCCCLast alert:|r |cFF888888—|r")
+    lines[5]:SetText("|cFFCCCCCCLast alert:|r |cFF888888--|r")
   end
 
-  -- Line 6: live verdict — what FireAlert would do if it ran right now.
+  -- Line 6: live verdict: what FireAlert would do if it ran right now.
   -- Mirrors FireAlert's gate logic without actually firing.
   if not state.castTime then
     lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF888888idle|r")
@@ -268,15 +216,18 @@ local function UpdateDisplay()
     lines[6]:SetText(string.format(
       "|cFFCCCCCCVerdict:|r |cFFFF8800SUPPRESSED|r |cFF555555(%s)|r",
       tostring(state.lastSuppressReason or "?")))
+  elseif state.provisionalUntil then
+    lines[6]:SetText(
+      "|cFFCCCCCCVerdict:|r |cFFFFAA00hold, waiting for a late empower|r")
   elseif state.alertPending then
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[6]:SetText(
-        "|cFFCCCCCCVerdict:|r |cFF888888expired — Rising Fury ended|r")
+        "|cFFCCCCCCVerdict:|r |cFF888888expired: Rising Fury ended|r")
     else
       local detail = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).verdict
       lines[6]:SetText(string.format(
-        "|cFFCCCCCCVerdict:|r |cFFFFAA00deferred — %s|r", detail))
+        "|cFFCCCCCCVerdict:|r |cFFFFAA00deferred: %s|r", detail))
     end
   else
     local Config = ApexFury.Config
@@ -291,14 +242,14 @@ local function UpdateDisplay()
     local rfAlive     = (not state.triggerDropTime) or (rem > 0)
 
     if not rfAlive then
-      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFFFF8800suppress — linger expired|r")
+      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger expired|r")
     elseif actualDur < requiredDur then
       lines[6]:SetText(string.format(
-        "|cFFCCCCCCVerdict:|r |cFFFFAA00wait — DR %.1fs / %.1fs needed|r",
+        "|cFFCCCCCCVerdict:|r |cFFFFAA00wait: DR %.1fs / %.1fs needed|r",
         actualDur, requiredDur))
     elseif rem ~= math.huge and rem < minRem then
       lines[6]:SetText(string.format(
-        "|cFFCCCCCCVerdict:|r |cFFFF8800suppress — linger %.1fs < %.1fs|r",
+        "|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger %.1fs < %.1fs|r",
         rem, minRem))
     else
       lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF00FF00WOULD FIRE|r |cFF555555(all gates pass)|r")
@@ -327,31 +278,27 @@ local function SavePosition()
 end
 
 ---------------------------------------------------------------------------
--- Frame creation (lazy — only when first shown)
+-- Frame creation: once, at load (the end of this file), so showing the
+-- overlay for the first time in combat creates nothing
 ---------------------------------------------------------------------------
 local function BuildFrame()
   if frame then return frame end
 
-  local f = CreateFrame("Frame", "ApexFuryOverlay", UIParent, "BasicFrameTemplateWithInset")
-  f:SetSize(290, 34 + NUM_LINES * 22 + 12)
-  f:SetFrameStrata("MEDIUM")
-  f:EnableMouse(true)
-  f:SetMovable(true)
-  f:SetClampedToScreen(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", function(self) self:StartMoving() end)
-  f:SetScript("OnDragStop", function(self)
-    self:StopMovingOrSizing()
-    SavePosition()
-  end)
-
-  -- Solid dark background behind the inset, matching the settings window
-  local solidBg = f:CreateTexture(nil, "BACKGROUND", nil, -8)
-  solidBg:SetAllPoints()
-  local wbg = TC.WINDOW_BG
-  solidBg:SetColorTexture(wbg[1], wbg[2], wbg[3], wbg[4])
-
-  f.TitleText:SetText(ApexFury.WrapBrand("ApexFury"))
+  -- Shared window shell (solid background, drag to move). Position is
+  -- persisted by SavePosition rather than the shell's persist option:
+  -- APEX_FURY_UI_STATE.overlay also carries the `shown` flag, which the
+  -- shared SaveWindowState would overwrite. Overlay.Show anchors the frame
+  -- from that table before showing it.
+  local f = UI.CreateWindow({
+    name       = "ApexFuryOverlay",
+    title      = ApexFury.WrapBrand("ApexFury"),
+    width      = 290,
+    height     = 34 + NUM_LINES * 22 + 12,
+    strata     = "MEDIUM",
+    toplevel   = false,
+    closeButtonInCombat = false,
+    onDragStop = SavePosition,
+  })
 
   -- BasicFrameTemplate exposes its close button as f.CloseButton; route it
   -- through Overlay.Hide so the SavedVariable visibility flag stays in sync.
@@ -428,3 +375,16 @@ function Overlay.RestoreFromSavedVar()
     Overlay.Show()
   end
 end
+
+-- Built hidden now: the overlay is there to be watched in combat, and a
+-- first /af overlay, the settings window's Overlay button or a restore after
+-- a /reload can all come mid-fight. Its OnUpdate only runs while it shows.
+BuildFrame()
+
+-- For ApexFury's WatcherSuite: one display update and a line's text
+Overlay._test = {
+  Update = UpdateDisplay,
+  GetLineText = function(i)
+    return lines[i] and lines[i]:GetText() or nil
+  end,
+}

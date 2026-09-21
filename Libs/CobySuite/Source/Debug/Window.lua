@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
--- CobySuite.Debug.NewWindow — shared debug window constructor
+-- CobySuite.Debug.NewWindow: shared debug window constructor
 --
 -- Each consumer addon calls NewWindow(opts) to get its own independent window
 -- with its own filters, state, and customizations. The core UI layout, filter
@@ -24,10 +24,11 @@ local DEFAULT_CATEGORY_BACKDROP = {
 }
 
 -------------------------------------------------------------------------------
--- Shared mixin — all methods reference self._logger for the addon's logger
+-- Shared mixin: all methods reference self._logger for the addon's logger
 -------------------------------------------------------------------------------
 local DebugWindowMixin = {}
 
+-- Toggle, SaveState and RestoreState come from the CreateWindow shell
 function DebugWindowMixin:OnLoad()
   self.TitleText:SetText(self._title)
 
@@ -85,9 +86,7 @@ function DebugWindowMixin:OnLoad()
     end
   end)
 
-  self:RegisterForDrag("LeftButton")
   self:CreateFilterButtons()
-  self:SetClampedToScreen(true)
 
   self._activeTab = "log"
 
@@ -180,8 +179,18 @@ function DebugWindowMixin:CreateFilterButtons()
       end
       diagBtn:GetFontString():SetTextColor(1, 0.5, 0)
     end
+    self:SyncCategoryChecks()
     self:RefreshDisplay()
   end)
+end
+
+-- The category checkboxes show the filters as they are now; called whenever
+-- the menu opens and after anything else changes the filters
+function DebugWindowMixin:SyncCategoryChecks()
+  if not self.categoryCheckboxes then return end
+  for cat, cb in pairs(self.categoryCheckboxes) do
+    cb:SetChecked(self.categoryFilters[cat] ~= false)
+  end
 end
 
 function DebugWindowMixin:ToggleCategoryMenu(anchor)
@@ -204,6 +213,7 @@ function DebugWindowMixin:ToggleCategoryMenu(anchor)
 
     local yOff = -8
     local checkboxes = {}
+    self.categoryCheckboxes = {}
     for _, cat in ipairs(logger.Categories) do
       local cb = CreateFrame("CheckButton", nil, self.categoryMenu, "UICheckButtonTemplate")
       cb:SetSize(20, 20)
@@ -220,6 +230,7 @@ function DebugWindowMixin:ToggleCategoryMenu(anchor)
       end)
 
       table.insert(checkboxes, cb)
+      self.categoryCheckboxes[cat] = cb
       yOff = yOff - 20
     end
 
@@ -257,6 +268,7 @@ function DebugWindowMixin:ToggleCategoryMenu(anchor)
     self.categoryMenu:SetSize(130, math.abs(yOff) + 32)
   end
 
+  self:SyncCategoryChecks()
   self.categoryMenu:ClearAllPoints()
   self.categoryMenu:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 2)
   self.categoryMenu:Show()
@@ -265,8 +277,13 @@ end
 -- === Tab Switching ===
 
 function DebugWindowMixin:SetTab(tabName)
-  self._activeTab = tabName
   local isLog = (tabName == "log")
+  -- Leaving the Log tab ends copy mode: ShowCopyBox hid Copy All, Copy Last
+  -- 250 and Clear, and only HideCopyBox shows them again
+  if not isLog and self.CopyScrollFrame:IsShown() then
+    self:HideCopyBox()
+  end
+  self._activeTab = tabName
 
   -- Log tab elements
   local copyShown = self.CopyScrollFrame:IsShown()
@@ -312,42 +329,49 @@ function DebugWindowMixin:RefreshDisplay()
   end
 
   self.lastEntryCount = logger.GetEntryCount()
+  self.lastResetCount = logger.GetResetCount()
+  self.lastBufferSize = nil
 
   if self.autoScroll then
     self.LogDisplay:SetScrollOffset(0)
   end
 end
 
+-- Appends only what was logged since the last frame (GetEntriesSince copies
+-- just those entries). Rebuilds instead when the buffer was replaced under
+-- the window (the reset count moved: a Clear, or the load-time restore of
+-- last session's log, which can leave the entry count higher than before),
+-- or when the log ran a whole buffer ahead of it.
 function DebugWindowMixin:OnUpdate()
   if self._activeTab ~= "log" then return end
 
   local logger = self._logger
   local currentCount = logger.GetEntryCount()
-  if currentCount > self.lastEntryCount then
-    local buf = logger.GetBuffer()
-    local bufLen = #buf
-    -- totalAdded maps to buf[bufLen], so buf index = bufLen - (currentCount - seqNum)
-    local newCount = currentCount - self.lastEntryCount
-    local startBufIdx = bufLen - newCount + 1
-    for i = math.max(1, startBufIdx), bufLen do
-      local entry = buf[i]
-      if entry then
-        local levelOk = self.levelFilters[entry.level]
-        local catOk = self.categoryFilters[entry.category]
-        if levelOk and catOk then
+  if logger.GetResetCount() ~= self.lastResetCount or currentCount < self.lastEntryCount then
+    self:RefreshDisplay()
+  elseif currentCount > self.lastEntryCount then
+    local entries, overrun = logger.GetEntriesSince(self.lastEntryCount)
+    if overrun then
+      self:RefreshDisplay()
+    else
+      for _, entry in ipairs(entries) do
+        if self.levelFilters[entry.level] and self.categoryFilters[entry.category] then
           local c = LEVEL_COLORS[entry.level] or LEVEL_COLORS.INFO
           self.LogDisplay:AddMessage(logger.FormatEntry(entry), c.r, c.g, c.b)
         end
       end
-    end
-    self.lastEntryCount = currentCount
-
-    if self.autoScroll then
-      self.LogDisplay:SetScrollOffset(0)
+      self.lastEntryCount = currentCount
+      if self.autoScroll then
+        self.LogDisplay:SetScrollOffset(0)
+      end
     end
   end
 
-  self.EntryCount:SetText(logger.GetBufferSize() .. " entries")
+  local size = logger.GetBufferSize()
+  if size ~= self.lastBufferSize then
+    self.lastBufferSize = size
+    self.EntryCount:SetText(size .. " entries")
+  end
 end
 
 -- === Copy Box ===
@@ -400,8 +424,7 @@ end
 
 function DebugWindowMixin:ClearLog()
   self._logger.Clear()
-  self.LogDisplay:Clear()
-  self.lastEntryCount = 0
+  self:RefreshDisplay()
 end
 
 -------------------------------------------------------------------------------
@@ -420,8 +443,19 @@ end
 --                                     onClick receives the window frame
 --   diagActiveColor        (table|fn?) {R, G, B} array or function returning same, default {0,1,0}
 --   categoryMenuBackdrop   (table|fn?) backdrop table or function returning one
+--   persist                (table?)   saved position and size, CreateWindow's persist:
+--                                     { svTable = table or function returning it,
+--                                       key = "debugWindow" (default), defaults = {...} }.
+--                                     A function suits a SavedVariable that loads after
+--                                     this file runs. Without it the window opens centred.
+--   escapeCloses           (bool?)    default true; false keeps Escape from closing it
+--
+-- The frame is a CobySuite.UI.CreateWindow shell (drag, resize grip, Escape
+-- through UISpecialFrames, a close button that works in combat), so it also
+-- has :Toggle(), :SaveState() and :RestoreState(). The saved geometry is
+-- applied whenever the window shows, so :Show() and :Toggle() agree.
 -------------------------------------------------------------------------------
-function CobySuite.Debug.NewWindow(opts)
+function CobySuite_ApexFury.Debug.NewWindow(opts)
   local windowName = opts.windowName
   local title = opts.title
   local logger = opts.logger
@@ -430,9 +464,30 @@ function CobySuite.Debug.NewWindow(opts)
   local diagActiveColor = opts.diagActiveColor or {0, 1, 0}
   local categoryMenuBackdrop = opts.categoryMenuBackdrop or DEFAULT_CATEGORY_BACKDROP
 
-  -- Create main frame
-  local f = CreateFrame("Frame", windowName, UIParent, "BasicFrameTemplateWithInset")
-  Mixin(f, DebugWindowMixin)
+  local persist
+  if opts.persist then
+    persist = {
+      svTable  = opts.persist.svTable,
+      key      = opts.persist.key or "debugWindow",
+      defaults = opts.persist.defaults,
+    }
+  end
+
+  -- Create main frame (the shell returns it hidden)
+  local f = CobySuite_ApexFury.UI.CreateWindow({
+    name            = windowName,
+    title           = title,
+    mixin           = DebugWindowMixin,
+    width           = 800,
+    height          = 550,
+    resizable       = { minWidth = 600, minHeight = 400, maxWidth = 1200, maxHeight = 800 },
+    solidBackground = false,
+    escapeCloses    = opts.escapeCloses ~= false,
+    persist         = persist,
+  })
+  if persist then
+    f:HookScript("OnShow", f.RestoreState)
+  end
 
   -- Store instance config
   f._title = title
@@ -441,17 +496,6 @@ function CobySuite.Debug.NewWindow(opts)
   f._categoryMenuBackdrop = categoryMenuBackdrop
   f._tabs = tabs
   f._tabContents = {}
-
-  -- Frame properties
-  f:SetSize(800, 550)
-  f:SetPoint("CENTER")
-  f:SetFrameStrata("HIGH")
-  f:EnableMouse(true)
-  f:SetMovable(true)
-  f:SetToplevel(true)
-  f:SetResizable(true)
-  f:SetResizeBounds(600, 400, 1200, 800)
-  f:Hide()
 
   -- EntryCount label
   f.EntryCount = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -485,7 +529,8 @@ function CobySuite.Debug.NewWindow(opts)
   f.ActionToolbar:SetPoint("BOTTOMLEFT", 12, 42)
   f.ActionToolbar:SetPoint("BOTTOMRIGHT", -12, 42)
 
-  -- Left side: Copy All, Copy Last 250, Clear, Back to Live
+  -- Left side: Copy All, Copy Last 250, Clear, then any extra left buttons.
+  -- Back to Live replaces the first three while the copy box is open
   f.CopyAllButton = CreateFrame("Button", nil, f.ActionToolbar, "UIPanelButtonTemplate")
   f.CopyAllButton:SetSize(90, 22)
   f.CopyAllButton:SetPoint("LEFT", 0, 0)
@@ -500,7 +545,10 @@ function CobySuite.Debug.NewWindow(opts)
 
   f.BackToLiveButton = CreateFrame("Button", nil, f.ActionToolbar, "UIPanelButtonTemplate")
   f.BackToLiveButton:SetSize(100, 22)
-  f.BackToLiveButton:SetPoint("LEFT", f.CopyRecentButton, "RIGHT", 4, 0)
+  -- At the left edge, in the hidden copy buttons' space: extra left buttons
+  -- stay chained after Clear, so in Clear's own spot this wider button would
+  -- run into the first of them
+  f.BackToLiveButton:SetPoint("LEFT", 0, 0)
   f.BackToLiveButton:SetText("Back to Live")
   f.BackToLiveButton:SetScript("OnClick", function() f:HideCopyBox() end)
   f.BackToLiveButton:Hide()
@@ -605,15 +653,11 @@ function CobySuite.Debug.NewWindow(opts)
     end
   end
 
-  -- Resize grip
-  f.ResizeGrip = CobySuite.UI.CreateResizeGrip(f)
-  f.ResizeGrip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
-  f.ResizeGrip:SetScript("OnMouseUp", function() f:StopMovingOrSizing() end)
+  -- The shell built the resize grip first; keep it above the content built since
+  f.ResizeGrip:SetFrameLevel(f:GetFrameLevel() + 10)
 
-  -- Scripts
+  -- Scripts (drag and the resize grip come from the shell)
   f:SetScript("OnUpdate", f.OnUpdate)
-  f:SetScript("OnDragStart", function(self) self:StartMoving() end)
-  f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
 
   f:OnLoad()
 

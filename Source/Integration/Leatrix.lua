@@ -4,7 +4,7 @@
 -- Leatrix Sounds publishes its main panel as the global LeaSoundsGlobalPanel
 -- but exposes no API for "what's currently selected." Workaround: hook every
 -- row button's OnClick and remember the last entry the user clicked. Our
--- options window then has Open + Grab buttons that drive this — the LTS
+-- options window then has Open + Grab buttons that drive this; the LTS
 -- panel itself stays unmodified (no injected button, no taint surface).
 --
 -- Selection format: each row's text is "path/file.ogg#FileDataID". We parse
@@ -25,7 +25,7 @@ local function CaptureFromText(text)
 end
 
 -- Walk a frame tree and attach an OnClick hook to anything that looks
--- like a Leatrix row button. Filter to Button/CheckButton — EditBox /
+-- like a Leatrix row button. Filter to Button/CheckButton: EditBox /
 -- ScrollFrame / etc. don't have an OnClick script and HookScript raises
 -- a Lua error if the named script doesn't exist on the frame type.
 local function HookRowButtons(frame)
@@ -110,7 +110,7 @@ function Leatrix.TryHook()
     if Leatrix._pollAttempts < POLL_MAX_ATTEMPTS then
       C_Timer.After(POLL_INTERVAL, Leatrix.TryHook)
     else
-      ApexFury.Debug.Log("INIT", "Leatrix integration: timeout — panel never appeared")
+      ApexFury.Debug.Log("INIT", "Leatrix integration: timeout: panel never appeared")
     end
     return false
   end

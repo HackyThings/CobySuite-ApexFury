@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
--- ApexFury.Sound — thin wrapper over CobySuite.Sound
+-- ApexFury.Sound: thin wrapper over CobySuite.Sound
 --
 -- Sound resolution, catalog, and playback now live in CobySuite so they
 -- can be reused across addons. ApexFury keeps a small per-addon shim
@@ -10,14 +10,15 @@
 -------------------------------------------------------------------------------
 
 local Sound = ApexFury.Sound
-local CSound = CobySuite.Sound
+local CSound = CobySuite_ApexFury.Sound
 
 Sound.Play = CSound.Play
 
-function Sound.LookupLabel(value)
-  local saved
-  if ApexFury.Config and ApexFury.Config.Get and ApexFury.Config.Options then
-    saved = ApexFury.Config.Get(ApexFury.Config.Options.SOUND_LABEL)
+-- label: the SOUND_LABEL to fall back on; the settings window passes its
+-- staged one, and nil reads the saved one
+function Sound.LookupLabel(value, label)
+  if label == nil and ApexFury.Config and ApexFury.Config.Get and ApexFury.Config.Options then
+    label = ApexFury.Config.Get(ApexFury.Config.Options.SOUND_LABEL)
   end
-  return CSound.LookupLabel(value, saved)
+  return CSound.LookupLabel(value, label)
 end
