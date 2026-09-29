@@ -4,6 +4,15 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-09-29
+
+### Changed
+
+- **Windows no longer stay on top of the game's own windows.** ApexFury's windows now sit with the game's panels: clicking any window brings it to the front, and a window opens in front. Only questions that need an answer, such as confirmations, stay above everything.
+- The settings window can now be made bigger by dragging its bottom-right corner, and it remembers its size.
+- Settings sections sit closer together, so each group reads as one block.
+- The command list in chat (`/af help`) is easier to read: commands in gold and their descriptions in white.
+
 ## [1.0.3] - 2026-09-21
 
 ### Changed
@@ -44,7 +53,8 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 Initial release of ApexFury.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.4
 [1.0.3]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.3
 [1.0.2]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.2
 [1.0.1]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.1

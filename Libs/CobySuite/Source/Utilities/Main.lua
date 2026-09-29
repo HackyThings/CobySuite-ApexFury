@@ -34,6 +34,7 @@ end
 ---------------------------------------------------------------------------
 U.Fonts = {
   TITLE = "GameFontNormalLarge",
+  HEADING = "GameFontNormalMed2",   -- gold, between TITLE and BODY (14 against 16 and 12)
   BODY  = "GameFontHighlight",
   SMALL = "GameFontNormalSmall",
   DATA  = "GameFontHighlightSmall",
@@ -94,6 +95,13 @@ U.Colors = {
   ALT_ROW_BG       = { 1, 1, 1, 0.03 },
   LIGHT_GRAY       = { 0.8, 0.8, 0.8 },
   LABEL_GRAY       = { 0.7, 0.7, 0.7 },
+  INFO_BLUE        = { 0.4, 0.8, 1 },       -- a positive but lesser state (Recollect's Useful)
+  CAUTION_ORANGE   = { 1, 0.6, 0.2 },       -- worth a look, not an error (Recollect's Outdated)
+  SAGE_GREEN       = { 0.6, 0.85, 0.6 },    -- settled, nothing left to do (Recollect's Purpose done)
+  SAND_TAN         = { 0.85, 0.72, 0.55 },  -- a milder caution than orange (Recollect's Lower level)
+  SLATE_GRAY       = { 0.62, 0.7, 0.86 },   -- not settled yet, told apart from plain text (Recollect's Can't tell)
+  LINK_YELLOW      = { 1, 1, 0 },            -- the game's link color for quests and achievements
+  LINK_BLUE        = { 0.443, 0.835, 1 },    -- the game's link color for spells (mounts, recipes, illusions)
 
   -- Inline text color codes (for WoW escape sequences)
   TEXT_GREEN  = "00FF00",
@@ -103,12 +111,14 @@ U.Colors = {
   TEXT_GOLD   = "FFD100",   -- the client's normal gold (NORMAL_FONT_COLOR)
 
   -- Slash command help and guide "Try it" lines (U.FormatCommandLine), so the
-  -- command stands out from its description
-  HELP_HEADING  = "FFD100",   -- the addon's name
+  -- command stands out from its description. Bright colors throughout: the
+  -- chat frame's background is see-through, and gray or pure green text was
+  -- hard to read over the game world (Cobanyte, 2026-09-27).
+  HELP_HEADING  = "66CCFF",   -- the addon's name
   HELP_SECTION  = "66CCFF",   -- a group of commands
-  HELP_COMMAND  = "00FF00",   -- what the player types as it is
-  HELP_ARGUMENT = "99CC99",   -- what the player fills in: <text>, [option]
-  HELP_TEXT     = "BBBBBB",   -- the description
+  HELP_COMMAND  = "FFD100",   -- what the player types as it is (the client's gold)
+  HELP_ARGUMENT = "FFE680",   -- what the player fills in: <text>, [option]
+  HELP_TEXT     = "FFFFFF",   -- the description
 }
 
 ---------------------------------------------------------------------------
@@ -143,8 +153,72 @@ U.Backdrops = {
 ---------------------------------------------------------------------------
 -- Color helper
 ---------------------------------------------------------------------------
-function U.WrapColor(hexColor, text)
-  return "|cFF" .. hexColor .. text .. "|r"
+-- ColorToHex(color): "RRGGBB" for a hex string (as it is), an {r, g, b}
+-- or { r =, g =, b = } table of 0 to 1 values (rounded), or a ColorMixin;
+-- white for anything else
+function U.ColorToHex(color)
+  if type(color) == "string" then return color end
+  if type(color) == "table" then
+    local r = color.r or color[1] or 1
+    local g = color.g or color[2] or 1
+    local b = color.b or color[3] or 1
+    return ("%02X%02X%02X"):format(math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
+  end
+  return "FFFFFF"
+end
+
+-- WrapColor(color, text): the text in a color, a hex string ("FFD100") or
+-- anything ColorToHex takes ({1, 0.82, 0}, a ColorMixin)
+function U.WrapColor(color, text)
+  return "|cFF" .. U.ColorToHex(color) .. text .. "|r"
+end
+
+-- StripColors(text): the text without color codes: "|cFFxxxxxx", "|cFF 0FF 0"
+-- (spaces for zeros), named "|cnHIGHLIGHT_FONT_COLOR:", and "|r" / "|R".
+-- Anything but a string gives "".
+function U.StripColors(text)
+  if type(text) ~= "string" then return "" end
+  if not text:find("|", 1, true) then return text end
+  return (text:gsub("|cn[%w_]*:", ""):gsub("|c........", ""):gsub("|[rR]", ""))
+end
+
+---------------------------------------------------------------------------
+-- Versions, key bindings and command lines as a player reads them
+---------------------------------------------------------------------------
+local BUTTON_WORDS = { BUTTON1 = "Left Click", BUTTON2 = "Right Click", BUTTON3 = "Middle Click" }
+
+-- CompareVersions(a, b): -1, 0 or 1 as version a is older than, the same as
+-- or newer than b; each run of digits is a number and missing parts count as
+-- 0 ("1.10" is newer than "1.9"; "1.2" equals "1.2.0"); with the numbers
+-- equal, letters right after the last number make a later build ("0.0.1a"
+-- is newer than "0.0.1", "0.0.1b" than "0.0.1a")
+function U.CompareVersions(a, b)
+  local function Parts(v)
+    local parts = {}
+    for n in tostring(v or ""):gmatch("%d+") do parts[#parts + 1] = tonumber(n) end
+    return parts
+  end
+  local function Suffix(v)
+    return (tostring(v or ""):match("%d(%a*)%s*$") or ""):lower()
+  end
+  local pa, pb = Parts(a), Parts(b)
+  for i = 1, math.max(#pa, #pb) do
+    local x, y = pa[i] or 0, pb[i] or 0
+    if x ~= y then return x < y and -1 or 1 end
+  end
+  local sa, sb = Suffix(a), Suffix(b)
+  if sa ~= sb then return sa < sb and -1 or 1 end
+  return 0
+end
+
+-- FormatKeyText(key): a binding string as the game saves it ("ALT-W",
+-- "SHIFT-CTRL-X", "ALT-BUTTON1", "SHIFT-BUTTON4") the way a player reads
+-- it ("Alt+W", "Shift+Ctrl+X", "Alt+Left Click", "Shift+Mouse 4"); nil
+-- for anything but a string
+function U.FormatKeyText(key)
+  if type(key) ~= "string" then return nil end
+  key = key:gsub("BUTTON(%d+)$", function(n) return BUTTON_WORDS["BUTTON" .. n] or ("Mouse " .. n) end)
+  return (key:gsub("SHIFT%-", "Shift+"):gsub("CTRL%-", "Ctrl+"):gsub("ALT%-", "Alt+"))
 end
 
 -- A command and what it does in the help colours, as slash help and guide
@@ -459,6 +533,34 @@ function U.ExpandPlaceholders(template, values)
     if value == nil then return nil end
     return tostring(value)
   end))
+end
+
+-- The number of characters in UTF-8 text: every byte but a continuation
+-- byte (128 to 191) starts one
+function U.Utf8Length(text)
+  local _, n = tostring(text):gsub("[^\128-\191]", "")
+  return n
+end
+
+-- text cut to at most maxChars characters, ending in suffix ("..." by
+-- default) when it was cut; a UTF-8 character is never split, so a cut
+-- name in any language stays valid text
+--   U.Truncate("Schwarzfelsspitze", 10)   -- "Schwarz..."
+function U.Truncate(text, maxChars, suffix)
+  text = tostring(text)
+  suffix = suffix or "..."
+  if U.Utf8Length(text) <= maxChars then return text end
+  local keep = math.max(0, maxChars - U.Utf8Length(suffix))
+  local count, cut = 0, 0
+  for i = 1, #text do
+    local b = string.byte(text, i)
+    if b < 128 or b >= 192 then   -- the first byte of a character
+      if count == keep then break end
+      count = count + 1
+    end
+    cut = i
+  end
+  return text:sub(1, cut) .. suffix
 end
 
 -- Plain-text money for chat messages, where texture icons do not render:

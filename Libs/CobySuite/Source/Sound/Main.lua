@@ -246,12 +246,10 @@ local function GetLSM()
   return LibStub("LibSharedMedia-3.0", true)
 end
 
--- Strip WoW |cAARRGGBB...|r color codes. Fast-path skips work when
--- there's no color code, which is true for all Blizzard SoundKit names.
+-- Strip WoW color codes (CobySuite.Utilities.StripColors, kept under this
+-- name for its callers)
 function Sound.StripColors(s)
-  if type(s) ~= "string" then return "" end
-  if not s:find("|c", 1, true) then return s end
-  return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+  return CobySuite_ApexFury.Utilities.StripColors(s)
 end
 
 local function PrettifyName(name)
@@ -279,20 +277,13 @@ local function GetSoundKitNamesById()
   return soundKitNamesById
 end
 
-function Sound.IsLSMAvailable()
-  return GetLSM() ~= nil
-end
-
 ---------------------------------------------------------------------------
 -- Entry construction helpers: pre-compute sort keys so subsequent
 -- sort/filter passes don't re-do StripColors/lower per comparison.
 ---------------------------------------------------------------------------
 local function MakeEntry(label, value, source, pack, kind, raw, path)
   local sortName = label or ""
-  if sortName ~= "" and sortName:find("|c", 1, true) then
-    sortName = (sortName:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
-  end
-  sortName = sortName:lower()
+  sortName = CobySuite_ApexFury.Utilities.StripColors(sortName):lower()
 
   local sortSource = source or ""
   if pack and source == "LibSharedMedia" then sortSource = pack end
@@ -398,9 +389,8 @@ end
 -- Public catalog API
 ---------------------------------------------------------------------------
 
--- Every catalog entry, Blizzard then LSM. opts is accepted and ignored
--- (callers once chose an optional extra source here).
-function Sound.GetEntries(opts)
+-- Every catalog entry, Blizzard then LSM
+function Sound.GetEntries()
   if not cachedEntries then
     local out = {}
     for _, e in ipairs(BuildBlizzardEntries()) do table.insert(out, e) end

@@ -52,7 +52,6 @@ function DebugWindowMixin:OnLoad()
   self.lastEntryCount = 0
   self.levelFilters = {}
   self.categoryFilters = {}
-  self.filterButtons = {}
 
   -- Enable all levels by default
   for _, level in pairs(self._logger.Levels) do
@@ -125,7 +124,6 @@ function DebugWindowMixin:CreateFilterButtons()
       self:RefreshDisplay()
     end)
 
-    table.insert(self.filterButtons, btn)
     xOffset = xOffset + 52
   end
 
@@ -433,6 +431,7 @@ end
 -- opts:
 --   windowName             (string)   global frame name, e.g., "CobySniperDebugWindow"
 --   title                  (string)   window title text
+--   icon                   (string?)  texture shown left of the title (CreateWindow)
 --   logger                 (table)    logger instance from NewLogger
 --   tabs                   (table?)   array of {name, label, contentKey?}
 --                                     first entry should be {name="log", label="Log"}
@@ -477,6 +476,7 @@ function CobySuite_ApexFury.Debug.NewWindow(opts)
   local f = CobySuite_ApexFury.UI.CreateWindow({
     name            = windowName,
     title           = title,
+    icon            = opts.icon,
     mixin           = DebugWindowMixin,
     width           = 800,
     height          = 550,

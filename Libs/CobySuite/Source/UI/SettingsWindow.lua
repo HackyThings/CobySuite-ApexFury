@@ -26,12 +26,26 @@
 -- appears or disappears with another setting (visibleWhen) needs no
 -- position bookkeeping.
 --
+-- The window grows from its bottom-right corner (CreateWindow's resize
+-- grip): width and height as declared are the smallest it gets, since the
+-- rows are laid out for them (a panel that fills its view, as ApexFury's
+-- sound browser does, never has to scroll), and it grows by up to
+-- MAX_GROWTH in each direction unless resizable gives other bounds. The
+-- size is saved and restored with the position under persist. A panel's
+-- rows follow its width: text wraps to it, sliders, multi-line boxes and
+-- full-width dropdowns stretch, and inputs, inline dropdowns and keybind
+-- buttons stay right-aligned. layout.contentWidth and layout.inputX give
+-- the width at build, so a Custom row sized from them keeps that size, and
+-- a category taller than the window scrolls.
+--
 --   local window = CobySuite.UI.CreateSettingsWindow({
 --     name    = "MyAddonSettingsWindow",   -- global name: Escape closes it; the Defaults popup is <name>DefaultsPopup
 --     title   = "My Addon - Settings",
+--     icon    = "Interface\Icons\INV_Misc_Book_09",  -- optional, left of the title (CreateWindow)
 --     config  = MyAddon.Config,            -- a CobySuite.Config.New instance (Get, Set, Defaults, CheckValue)
 --     persist = { svTable = function() return MY_ADDON_WINDOW_STATE end, key = "settings" },
 --     width   = 680, height = 480,         -- the defaults; the sidebar takes 140 of the width when shown
+--     resizable = { maxWidth = 1180, maxHeight = 980 },  -- optional bounds; false keeps the size fixed
 --     watch   = { bus = MyAddon.EventBus, event = MyAddon.Events.ConfigChanged },   -- optional
 --     onApply = function(changes, window) end,   -- after Apply: changes[key] = { old = ..., new = ... }
 --     message = MyAddon.Utilities.Message,       -- prints a value Config.Set refused (default print)
@@ -39,8 +53,20 @@
 --     categories = {
 --       { key = "general", label = "General", build = function(panel, window) ... end },
 --       { key = "sound", label = "Sound", scroll = false, build = function(frame, window) ... end },
+--       { key = "extra", label = "Extra", config = function() return Other.Config end, build = ... },
 --     },
 --   })
+--
+-- A category's optional config (a config, or a function returning one or
+-- nil) owns the settings its rows bind; the window's config owns the rest.
+-- A function is called on every read and write, so it can name a config
+-- that exists only later (a part of the addon that loads after the window
+-- is built, or may not load at all). While it returns nil, that category's
+-- controls are not painted, Defaults and Apply leave its keys alone, and
+-- rows meant only for then are gated with visibleWhen. Keys are staged by
+-- name alone, so keys of two configs in one window must not share a name.
+-- A scroll = false category binds no rows, so it always uses the window's
+-- config.
 --
 -- Rows (each returns its row frame). Every row takes visibleWhen =
 -- function(get) and refresh = function(row, window) (run after every sync
@@ -63,7 +89,9 @@
 --   panel:Slider{ key, label, tooltip, min, max, step, format(value) -> text }
 --   panel:Dropdown{ key, label, tooltip, labels, values, tooltips, inline, width }   -- inline: label left, dropdown right
 --   panel:Radio{ key, options = { { value =, label =, tooltip = } }, indent }
---   panel:Keybind{ key, label, tooltip }                  -- capture button and Clear (stages no value)
+--   panel:Keybind{ key, label, tooltip, mouse, indent }   -- capture button and Clear (stages no value); mouse
+--                                                          --   also takes a click on the button: any of Middle, Mouse 4
+--                                                          --   and 5, and Left or Right with a modifier ("ALT-BUTTON1")
 --   panel:MultiLine{ key, height, maxLetters, maxBytes, placeholder, fontScale, tooltip, validate(text) -> bool }
 --   panel:Button{ text, width, tooltip, onClick(window) }
 --   panel:Custom{ height, keys = { ... }, build(row, window, layout), refresh(row, window) }
@@ -73,7 +101,8 @@
 --   window:HasEdits()  -- a staged value, or an Input being typed in
 --   window:Toggle()   window:Open()   window:SelectCategory(key)
 --   window:NotifyConfigChanged(key)   -- for an addon with no config event (nil: every setting)
---   window.panels[categoryKey]         -- .content, .layout (pad, rowHeight, contentWidth, inputX(width))
+--   window:Relayout()                  -- lays the panels out again at the window's size (a resize does it)
+--   window.panels[categoryKey]         -- .content, .layout (pad, rowHeight, contentWidth, inputX(width)), :Width()
 ---------------------------------------------------------------------------
 local UI = CobySuite_ApexFury.UI
 local U = CobySuite_ApexFury.Utilities
@@ -82,8 +111,12 @@ local SIDEBAR_W = 140
 local SIDEBAR_BUTTON_H = 28
 local PAD = 16
 local ROW_H = 26
-local SECTION_H = 25
-local SECTION_GAP = 22       -- above every section but a panel's first row
+local RADIO_H = 22           -- one radio button's line: its circle is 16 high, a checkbox 24
+-- A section's header and divider sit close over its rows and further from
+-- the rows above, so each section reads as one group
+local SECTION_H = 22         -- the header's line and the divider under it
+local SECTION_GAP = 14       -- above every section but a panel's first row
+local MAX_GROWTH = 500       -- how far the window grows past its declared size, each way
 local INPUT_W = 55
 local SCROLLBAR_ROOM = 20    -- the scroll indicator and a margin, right of every control
 local CONTENT_TOP = 26       -- below the title bar
@@ -179,6 +212,14 @@ local function AddScrollIndicator(scroll)
     ScrollTo((self:GetTop() - CursorY()) / height * scroll:GetVerticalScrollRange())
   end)
 
+  -- A range that shrinks (the window grew, a row hid) brings the offset
+  -- back inside it, so no blank band shows above the first row
+  scroll:SetScript("OnScrollRangeChanged", function(self)
+    local range = math.max(0, self:GetVerticalScrollRange())
+    if self:GetVerticalScroll() > range then self:SetVerticalScroll(range) end
+    Update()
+  end)
+
   scroll.UpdateScrollIndicator = Update
 end
 
@@ -186,17 +227,38 @@ end
 -- Staging
 ---------------------------------------------------------------------------
 
--- The staged value, else the saved one
+-- The config that owns a key: its category's (resolved now, possibly nil)
+-- or the window's
+local function Resolve(config)
+  if type(config) == "function" then return config() end
+  return config
+end
+
+function Settings:ConfigFor(key)
+  local owner = self.keyConfig[key]
+  if owner ~= nil then return Resolve(owner) end
+  return self.config
+end
+
+-- The staged value, else the saved one (nil while the key's config is absent)
 function Settings:Get(key)
   local staged = self.pending[key]
   if staged == CLEAR then return nil end
   if staged ~= nil then return staged end
-  return self.config.Get(key)
+  local config = self:ConfigFor(key)
+  if not config then return nil end
+  return config.Get(key)
 end
 
--- Records a value without refreshing anything
+-- Records a value without refreshing anything (nothing while the key's
+-- config is absent)
 function Settings:StageValue(key, value)
-  if value == self.config.Get(key) then
+  local config = self:ConfigFor(key)
+  if not config then
+    self.pending[key] = nil
+    return
+  end
+  if value == config.Get(key) then
     self.pending[key] = nil
   elseif value == nil then
     self.pending[key] = CLEAR
@@ -240,13 +302,14 @@ function Settings:HasEdits()
 end
 
 -- Paints the bound controls from resolver(key), without staging. With
--- skipStaged, a control holding a staged edit or being typed in keeps it.
+-- skipStaged, a control holding a staged edit or being typed in keeps it. A
+-- control whose config is absent is left as it is.
 function Settings:Populate(resolver, onlyKey, skipStaged)
   self.syncing = true
   for _, control in ipairs(self.controls) do
     local key = control.key
     local held = skipStaged and (self.pending[key] ~= nil or self.editing[key])
-    if (onlyKey == nil or key == onlyKey) and not held then
+    if (onlyKey == nil or key == onlyKey) and not held and self:ConfigFor(key) then
       control.set(resolver(key))
     end
   end
@@ -273,8 +336,9 @@ function Settings:Cancel()
   self:Sync()
 end
 
--- The saved value, or nil when reading it throws
+-- The saved value, or nil when reading it throws or there is no config
 local function SafeGet(config, key)
+  if not config then return nil end
   local ok, value = pcall(config.Get, key)
   if ok then return value end
   return nil
@@ -300,15 +364,21 @@ function Settings:Apply()
     local stagedValue = staged[key]
     local value = stagedValue
     if value == CLEAR then value = nil end
-    local old = SafeGet(self.config, key)
-    local ok, result, reason = pcall(self.config.Set, key, value)
+    local config = self:ConfigFor(key)
+    local old = SafeGet(config, key)
+    local ok, result, reason
+    if config then
+      ok, result, reason = pcall(config.Set, key, value)
+    else
+      ok, result, reason = true, false, "its settings are not available now"
+    end
     local name = tostring(key)
     if ok and result == false then
       notes[#notes + 1] = ("Setting %s was not applied: %s"):format(name, tostring(reason))
     elseif ok then
-      changes[key] = { old = old, new = SafeGet(self.config, key) }
+      changes[key] = { old = old, new = SafeGet(config, key) }
     else
-      local now = SafeGet(self.config, key)
+      local now = SafeGet(config, key)
       if now ~= old then
         changes[key] = { old = old, new = now }
         notes[#notes + 1] = ("Setting %s was saved, but applying it failed: %s"):format(name, tostring(result))
@@ -340,11 +410,11 @@ function Settings:Apply()
   end
 end
 
--- Stages the default of every setting the window shows
+-- Stages the default of every setting the window shows whose config is there
 function Settings:StageDefaults()
-  local defaults = self.config.Defaults or {}
   for key in pairs(self.keys) do
-    self:StageValue(key, defaults[key])
+    local config = self:ConfigFor(key)
+    if config then self:StageValue(key, (config.Defaults or {})[key]) end
   end
   self:Populate(self.getter)
 end
@@ -353,10 +423,16 @@ end
 -- key) unless its control holds a staged edit
 function Settings:NotifyConfigChanged(key)
   if self.applying or not self:IsShown() then return end
-  self:Populate(function(k) return self.config.Get(k) end, key, true)
+  self:Populate(function(k)
+    local config = self:ConfigFor(k)
+    return config and config.Get(k)
+  end, key, true)
 end
 
--- Buttons, enabled states, visible rows and custom refreshers
+-- Buttons, enabled states, custom refreshers and visible rows. The
+-- refreshers run before the layout: a refresher may set a row's text
+-- (a Description filled in refresh), and the layout measures each row's
+-- height from the text it has then.
 function Settings:RefreshState()
   local edits = self:HasEdits()
   self.ApplyButton:SetEnabled(edits)
@@ -366,11 +442,17 @@ function Settings:RefreshState()
       row.SetRowEnabled(row.enabledWhen(self.getter) and true or false)
     end
   end
-  for _, panel in ipairs(self.panelList) do
-    if panel.Layout then panel:Layout() end
-  end
   for _, refresher in ipairs(self.refreshers) do
     refresher()
+  end
+  self:Relayout()
+end
+
+-- Lays every panel out at its width now (a scroll = false panel lays
+-- itself out)
+function Settings:Relayout()
+  for _, panel in ipairs(self.panelList) do
+    if panel.Layout then panel:Layout() end
   end
 end
 
@@ -383,6 +465,8 @@ function Settings:SelectCategory(key)
     local selected = categoryKey == key
     panel.frame:SetShown(selected)
     if selected and panel.scroll then
+      -- A panel hidden while the window was resized has not followed it yet
+      if self:IsShown() then panel:Layout() end
       panel.scroll:SetVerticalScroll(0)
       C_Timer.After(0, panel.scroll.UpdateScrollIndicator)
     end
@@ -421,8 +505,26 @@ function Panel:AddRow(height, opts, gap)
   return row
 end
 
--- Stacks the visible rows from the top and sizes the scroll child
+-- The panel's width now: its scroll frame's, which follows the window's
+-- size; the width at build while the frame has none yet
+function Panel:Width()
+  local width = self.scroll:GetWidth()
+  if type(width) ~= "number" or width <= 0 then return self.layout.contentWidth end
+  return width
+end
+
+-- Stacks the visible rows from the top and sizes the scroll child. A new
+-- width first goes to every row that follows it (row.Reflow), hidden ones
+-- too, so a row that shows later is already at the width.
 function Panel:Layout()
+  local width = self:Width()
+  if width ~= self.width then
+    self.width = width
+    self.content:SetWidth(width)
+    for _, row in ipairs(self.rows) do
+      if row.Reflow then row.Reflow(width) end
+    end
+  end
   local get = self.window.getter
   local y = -PAD
   local first = true
@@ -472,6 +574,7 @@ end
 function Panel:Bind(key, set, stop)
   local window = self.window
   window.keys[key] = true
+  if self.config ~= nil then window.keyConfig[key] = self.config end
   table.insert(window.controls, { key = key, set = set, stop = stop })
 end
 
@@ -493,7 +596,8 @@ function Panel:Description(text, opts)
   local row = self:AddRow(ROW_H, opts)
   row.Text = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   row.Text:SetPoint("TOPLEFT", row, "TOPLEFT", PAD, -4)
-  row.Text:SetWidth(self.layout.contentWidth - PAD * 2 - SCROLLBAR_ROOM)
+  row.Reflow = function(width) row.Text:SetWidth(width - PAD * 2 - SCROLLBAR_ROOM) end
+  row.Reflow(self.layout.contentWidth)
   row.Text:SetJustifyH("LEFT")
   row.Text:SetWordWrap(true)
   row.Text:SetText(text or "")
@@ -522,8 +626,18 @@ function Panel:Input(o)
   local window = self.window
   local row = self:AddRow(ROW_H, o)
   local width = o.width or INPUT_W
+  local indent = o.indent or 0
   local x = o.x or self.layout.inputX(width)
-  row.Label = self:Label(row, o.label, o.tooltip, PAD + (o.indent or 0), x - PAD - (o.indent or 0) - 8)
+  row.Label = self:Label(row, o.label, o.tooltip, PAD + indent, x - PAD - indent - 8)
+  -- Without an x the input stays at the row's right edge, and its label
+  -- takes the room left of it
+  local point = { "LEFT", row, "TOPLEFT", x, -ROW_H / 2 }
+  if not o.x then
+    point = { "RIGHT", row, "TOPRIGHT", -(PAD + SCROLLBAR_ROOM), -ROW_H / 2 }
+    row.Reflow = function(rowWidth)
+      row.Label:SetWidth(rowWidth - width - PAD - SCROLLBAR_ROOM - PAD - indent - 8)
+    end
+  end
 
   local format = o.format or function(value)
     if value == nil then return "" end
@@ -546,7 +660,7 @@ function Panel:Input(o)
     width = width,
     maxLetters = o.maxLetters,
     tooltip = o.tooltip,
-    point = { "LEFT", row, "TOPLEFT", x, -ROW_H / 2 },
+    point = point,
     parse = function(text)
       text = strtrim(text)
       local current = window:Get(o.key)
@@ -554,7 +668,8 @@ function Panel:Input(o)
       return parse(text)
     end,
     validate = function(value)
-      if window.config.CheckValue and not window.config.CheckValue(o.key, value) then return false end
+      local config = window:ConfigFor(o.key)
+      if config and config.CheckValue and not config.CheckValue(o.key, value) then return false end
       if o.validate and not o.validate(value) then return false end
       return true
     end,
@@ -611,6 +726,7 @@ function Panel:Slider(o)
       window:Stage(o.key, value)
     end,
   })
+  row.Reflow = function(width) row.Slider:SetWidth(width - PAD * 2 - SCROLLBAR_ROOM) end
   row.SetRowEnabled = function(enabled)
     row.Slider:SetEnabled(enabled)
     SetLabelEnabled(row.Label, enabled)
@@ -636,10 +752,13 @@ function Panel:Dropdown(o)
     row.Dropdown = UI.CreateDropDown(row, {
       label = false,
       width = width,
-      point = { "LEFT", row, "TOPLEFT", self.layout.inputX(width), -(ROW_H + 4) / 2 },
+      point = { "RIGHT", row, "TOPRIGHT", -(PAD + SCROLLBAR_ROOM), -(ROW_H + 4) / 2 },
       labels = o.labels, values = o.values, tooltips = o.tooltips,
       onValueChanged = function(value) window:Stage(o.key, value) end,
     })
+    row.Reflow = function(rowWidth)
+      row.Label:SetWidth(rowWidth - width - PAD - SCROLLBAR_ROOM - PAD - 8)
+    end
   else
     row = self:AddRow(46, o)
     row.Dropdown = UI.CreateDropDown(row, {
@@ -651,6 +770,14 @@ function Panel:Dropdown(o)
     })
     row.Label = o.label and row.Dropdown.Label or nil
     if row.Label and o.tooltip then UI.AddTooltip(row.Label, o.tooltip, "ANCHOR_RIGHT") end
+    -- A dropdown with no width of its own spans the row
+    if not o.width then
+      row.Reflow = function(rowWidth)
+        local ddWidth = rowWidth - PAD * 2 - SCROLLBAR_ROOM
+        row.Dropdown.DropDown:SetWidth(ddWidth)
+        row.Dropdown:SetWidth(o.label and math.max(200, ddWidth) or ddWidth)
+      end
+    end
   end
   row.SetRowEnabled = function(enabled)
     row.Dropdown.DropDown:SetEnabled(enabled)
@@ -663,7 +790,7 @@ end
 function Panel:Radio(o)
   local window = self.window
   local options = o.options or {}
-  local row = self:AddRow(ROW_H * math.max(1, #options), o)
+  local row = self:AddRow(RADIO_H * math.max(1, #options), o)
   row.Buttons = {}
   local function Check(value)
     for _, entry in ipairs(row.Buttons) do
@@ -674,7 +801,7 @@ function Panel:Radio(o)
     local button = UI.CreateRadioButton(row, {
       label = option.label,
       tooltip = option.tooltip or o.tooltip,
-      point = { "LEFT", row, "TOPLEFT", PAD + (o.indent or 0), -(i - 0.5) * ROW_H },
+      point = { "LEFT", row, "TOPLEFT", PAD + (o.indent or 0), -(i - 0.5) * RADIO_H },
       onChange = function()
         Check(option.value)
         window:Stage(o.key, option.value)
@@ -690,23 +817,46 @@ function Panel:Radio(o)
 end
 
 local MODIFIER_KEYS = { LSHIFT = true, RSHIFT = true, LCTRL = true, RCTRL = true, LALT = true, RALT = true }
+-- A click's binding names, as the game's binding code converts them
+-- (BindingUtil's GetConvertedKeyOrButton)
+local MOUSE_BUTTONS = { LeftButton = "BUTTON1", RightButton = "BUTTON2", MiddleButton = "BUTTON3",
+  Button4 = "BUTTON4", Button5 = "BUTTON5" }
+
+-- The key with the modifiers held now, in the order this row has always saved
+local function Chord(key)
+  return (IsShiftKeyDown() and "SHIFT-" or "") .. (IsControlKeyDown() and "CTRL-" or "")
+    .. (IsAltKeyDown() and "ALT-" or "") .. key
+end
 
 function Panel:Keybind(o)
   local window = self.window
   local row = self:AddRow(ROW_H + 4, o)
-  local clearX = self.layout.contentWidth - PAD - SCROLLBAR_ROOM - 60
-  local captureX = clearX - 6 - 130
-  row.Label = self:Label(row, o.label, o.tooltip, PAD, captureX - PAD - 8)
+  local indent = o.indent or 0
+  -- Clear sits at the row's right edge and the capture button left of it;
+  -- the label takes the room left of both
+  local function CaptureX(rowWidth)
+    return rowWidth - PAD - SCROLLBAR_ROOM - 60 - 6 - 130
+  end
+  row.Label = self:Label(row, o.label, o.tooltip, PAD + indent, CaptureX(self.layout.contentWidth) - PAD - indent - 8)
   row.Label:ClearAllPoints()
-  row.Label:SetPoint("LEFT", row, "TOPLEFT", PAD, -(ROW_H + 4) / 2)
-
-  local function Text(value)
-    return value or "Not Set"
+  row.Label:SetPoint("LEFT", row, "TOPLEFT", PAD + indent, -(ROW_H + 4) / 2)
+  row.Reflow = function(rowWidth)
+    row.Label:SetWidth(CaptureX(rowWidth) - PAD - indent - 8)
   end
 
+  -- "Alt+W", "Alt+Left Click": as the addons word keys elsewhere (U.FormatKeyText)
+  local function Text(value)
+    if not value then return "Not Set" end
+    return U.FormatKeyText(value)
+  end
+
+  row.Clear = UI.CreateButton(row, {
+    size = { 60, 22 }, text = "Clear",
+    point = { "RIGHT", row, "TOPRIGHT", -(PAD + SCROLLBAR_ROOM), -(ROW_H + 4) / 2 },
+  })
   row.Capture = UI.CreateButton(row, {
     size = { 130, 24 }, text = "Not Set", tooltip = o.tooltip,
-    point = { "LEFT", row, "TOPLEFT", captureX, -(ROW_H + 4) / 2 },
+    point = { "RIGHT", row.Clear, "LEFT", -6, 0 },
   })
   local capture = row.Capture
 
@@ -718,10 +868,21 @@ function Panel:Keybind(o)
     capture:SetText(Text(window:Get(o.key)))
   end
 
+  local function Captured(binding)
+    StopCapture()
+    window:Stage(o.key, binding)
+    capture:SetText(Text(binding))
+  end
+
   capture:SetScript("OnClick", function(self)
+    -- the release of the Left click just captured is not a new capture
+    if self.swallowClick then
+      self.swallowClick = nil
+      return
+    end
     if self.capturing or InCombatLockdown() then return end
     self.capturing = true
-    self:SetText("Press a key...")
+    self:SetText(o.mouse and "Press a key or click" or "Press a key...")
     self:EnableKeyboard(true)
     self:SetScript("OnKeyDown", function(button, key)
       button:SetPropagateKeyboardInput(false)
@@ -730,24 +891,29 @@ function Panel:Keybind(o)
         StopCapture()
         return
       end
-      local binding = (IsShiftKeyDown() and "SHIFT-" or "") .. (IsControlKeyDown() and "CTRL-" or "")
-        .. (IsAltKeyDown() and "ALT-" or "") .. key
-      StopCapture()
-      window:Stage(o.key, binding)
-      button:SetText(Text(binding))
+      Captured(Chord(key))
     end)
   end)
   capture:SetScript("OnHide", StopCapture)
+  -- A click while capturing (hooked: the template's own OnMouseDown draws the
+  -- pressed look). A plain Left or Right click is every click, so those need
+  -- a modifier.
+  if o.mouse then
+    capture:HookScript("OnMouseDown", function(button, mouseButton)
+      if not button.capturing then return end
+      local key = MOUSE_BUTTONS[mouseButton]
+      if not key then return end
+      if (key == "BUTTON1" or key == "BUTTON2") and not IsModifierKeyDown() then return end
+      if mouseButton == "LeftButton" then button.swallowClick = true end
+      Captured(Chord(key))
+    end)
+  end
 
-  row.Clear = UI.CreateButton(row, {
-    size = { 60, 22 }, text = "Clear",
-    point = { "LEFT", capture, "RIGHT", 6, 0 },
-    onClick = function()
-      StopCapture()
-      window:Stage(o.key, nil)
-      capture:SetText(Text(window:Get(o.key)))
-    end,
-  })
+  row.Clear:SetScript("OnClick", function()
+    StopCapture()
+    window:Stage(o.key, nil)
+    capture:SetText(Text(window:Get(o.key)))
+  end)
 
   row.SetRowEnabled = function(enabled)
     capture:SetEnabled(enabled)
@@ -805,6 +971,14 @@ function Panel:MultiLine(o)
       window:Unstage(o.key)
     end
   end
+  -- The box spans the row; its text area is 18 narrower, as the factory
+  -- builds it
+  row.Reflow = function(width)
+    local boxWidth = width - PAD * 2 - SCROLLBAR_ROOM
+    row.Box:SetWidth(boxWidth)
+    row.Box.EditBox:SetWidth(boxWidth - 18)
+    if row.Box.EditBox.Instructions then row.Box.EditBox.Instructions:SetWidth(boxWidth - 18) end
+  end
   row.Box.EditBox:HookScript("OnEscapePressed", StageShown)
   row.Box.EditBox:HookScript("OnEditFocusLost", StageShown)
   self:Bind(o.key, function(value) row.Box:SetCommittedValue(value) end, function()
@@ -829,7 +1003,10 @@ function Panel:Custom(o)
   local window = self.window
   local row = self:AddRow(o.height or ROW_H, o)
   if o.keys then
-    for _, key in ipairs(o.keys) do window.keys[key] = true end
+    for _, key in ipairs(o.keys) do
+      window.keys[key] = true
+      if self.config ~= nil then window.keyConfig[key] = self.config end
+    end
   end
   if o.build then o.build(row, window, self.layout) end
   return row
@@ -892,17 +1069,28 @@ function UI.CreateSettingsWindow(opts)
       svTable = opts.persist.svTable,
       key = opts.persist.key or "settings",
       defaults = opts.persist.defaults or { point = "CENTER", relPoint = "CENTER", x = 0, y = 0 },
-      fixedSize = true,
+    }
+  end
+
+  -- Grows from the declared size, never below it (see the header)
+  local resizable
+  if opts.resizable ~= false then
+    local r = type(opts.resizable) == "table" and opts.resizable or {}
+    resizable = {
+      minWidth = r.minWidth or width, minHeight = r.minHeight or height,
+      maxWidth = r.maxWidth or width + MAX_GROWTH, maxHeight = r.maxHeight or height + MAX_GROWTH,
     }
   end
 
   local window = UI.CreateWindow({
     name = opts.name,
     title = opts.title,
+    icon = opts.icon,
     width = width,
     height = height,
     escapeCloses = true,
     persist = persist,
+    resizable = resizable,
     strata = opts.strata,
   })
   Mixin(window, Settings)
@@ -912,6 +1100,7 @@ function UI.CreateSettingsWindow(opts)
   window.editing = {}
   window.controls = {}
   window.keys = {}
+  window.keyConfig = {}      -- [key] = the category config that owns it (a config or a function)
   window.refreshers = {}
   window.dynamicRows = {}
   window.panels = {}
@@ -927,7 +1116,6 @@ function UI.CreateSettingsWindow(opts)
     contentArea:SetPoint("TOPLEFT", 8, -CONTENT_TOP)
   end
   contentArea:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -8, FOOTER_H)
-  window.ContentArea = contentArea
   local contentWidth = width - 16 - (withSidebar and (SIDEBAR_W + 4) or 0)
 
   -- The bottom bar first: RefreshState reads its buttons
@@ -959,9 +1147,10 @@ function UI.CreateSettingsWindow(opts)
       onClick = function() if extra.onClick then extra.onClick(window) end end,
     })
   end
+  -- Clear of the resize grip in the corner
   window.CancelButton = UI.CreateButton(window, {
     size = { FOOTER_BUTTON_W, FOOTER_BUTTON_H }, text = "Cancel",
-    point = { "BOTTOMRIGHT", -12, 12 },
+    point = { "BOTTOMRIGHT", window.ResizeGrip and -22 or -12, 12 },
     onClick = function() window:Cancel() end,
   })
   window.ApplyButton = UI.CreateButton(window, {
@@ -990,6 +1179,11 @@ function UI.CreateSettingsWindow(opts)
       content:SetHeight(1)
       scroll:SetScrollChild(content)
       AddScrollIndicator(scroll)
+      -- The window's size changed: rows follow the new width (while it
+      -- shows: the rows read the settings, which may not be loaded before)
+      scroll:SetScript("OnSizeChanged", function()
+        if panel and window:IsShown() then panel:Layout() end
+      end)
 
       panel = setmetatable({
         key = category.key,
@@ -997,6 +1191,7 @@ function UI.CreateSettingsWindow(opts)
         scroll = scroll,
         content = content,
         window = window,
+        config = category.config,
         rows = {},
         layout = {
           pad = PAD,

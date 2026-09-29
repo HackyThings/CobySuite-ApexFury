@@ -21,7 +21,8 @@
 --   1. Always-registered events: PLAYER_LOGIN, PLAYER_ENTERING_WORLD,
 --      PLAYER_SPECIALIZATION_CHANGED, ACTIVE_TALENT_GROUP_CHANGED,
 --      TRAIT_CONFIG_UPDATED. Cheap, low-frequency.
---   2. PLAYER_LOGIN does the initial evaluation + emit (always speaks once).
+--   2. PLAYER_LOGIN does the initial evaluation + emit (speaks once unless
+--      the state is "ready", which is silent).
 --      PLAYER_ENTERING_WORLD silently re-evaluates (zone changes shouldn't
 --      spam chat) but emits on actual state transitions.
 --   3. The three talent events are debounced 0.5s (TRAIT_CONFIG_UPDATED
@@ -466,9 +467,9 @@ local TALENT_DATA_BODY = "ApexFury stays off until it loads. Changing talents or
 
 local EmitTransition
 function EmitTransition(prev, next, isInitial)
-  -- Initial login emit: speak once, regardless of state: the user may have
-  -- switched characters or installed mid-session. After the first emit,
-  -- subsequent calls only speak on actual transitions.
+  -- Initial login emit: speak once for any state but "ready" (the user may
+  -- have switched characters or installed mid-session). After the first
+  -- emit, subsequent calls only speak on actual transitions.
   if isInitial then
     if next.reason == "wrong_class" then
       Bad("Inactive:",

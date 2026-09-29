@@ -26,18 +26,7 @@ CobySuite_ApexFury.Chat = CobySuite_ApexFury.Chat or {}
 local Chat = CobySuite_ApexFury.Chat
 local U = CobySuite_ApexFury.Utilities
 
-local function ToHex(color)
-  if type(color) == "string" then
-    return color
-  end
-  if type(color) == "table" then
-    local r = color.r or color[1] or 1
-    local g = color.g or color[2] or 1
-    local b = color.b or color[3] or 1
-    return string.format("%02X%02X%02X", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
-  end
-  return "FFFFFF"
-end
+local ToHex = U.ColorToHex
 
 function Chat.NewMessenger(opts)
   opts = opts or {}
@@ -78,4 +67,28 @@ function Chat.ComposeWhisper(target, text)
   editBox:SetTellTarget(target)
   ChatFrameUtil.OpenChat(text or "")
   return editBox
+end
+
+---------------------------------------------------------------------------
+-- Chat.PutInChat(text): a link or text into chat, as a Shift-click does
+--
+-- Into the chat box already open (or wherever the game's InsertLink puts
+-- it), else a newly opened one. Never into the macro editor: InsertLink
+-- types into MacroFrameText while it has focus, and text an addon types
+-- there taints the macro window's saves (measured with Coby's Linkepedia's
+-- macro tools, 2026-09-16), so chat opens instead. InsertLink alone does
+-- nothing when no box takes the text; OpenChat covers that.
+---------------------------------------------------------------------------
+-- The client calls PutInChat makes, swapped by tests (never a Blizzard global)
+Chat.seams = {
+  MacroFocused = function() return MacroFrameText ~= nil and MacroFrameText:HasFocus() == true end,
+  InsertLink = function(text) return ChatFrameUtil.InsertLink(text) end,
+  OpenChat = function(text) ChatFrameUtil.OpenChat(text) end,
+}
+
+function Chat.PutInChat(text)
+  local seams = Chat.seams
+  if seams.MacroFocused() or not seams.InsertLink(text) then
+    seams.OpenChat(text)
+  end
 end

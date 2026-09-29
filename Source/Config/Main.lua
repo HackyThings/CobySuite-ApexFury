@@ -45,7 +45,7 @@ local base = CobySuite_ApexFury.Config.New({
     MIN_REMAINING    = "min_remaining",    -- min seconds of linger remaining required to fire deferred alert
     SOUND_ID         = "sound_id",
     SOUND_LABEL      = "sound_label",      -- persisted friendly label (e.g. Leatrix path) for sounds outside our catalog
-    SOUND_CHANNEL    = "sound_channel",    -- WoW audio channel: "Dialog" (default), "Master", "SFX", "Music", "Ambience"
+    SOUND_CHANNEL    = "sound_channel",    -- WoW audio channel: "Dialog" (default), "Master" or "SFX" (ApexFury.SOUND_CHANNELS)
     ENABLED          = "enabled",
     VERBOSE          = "verbose",
   },
@@ -61,7 +61,7 @@ local base = CobySuite_ApexFury.Config.New({
     ["min_remaining"]    = 2,      -- need >=2s of linger remaining to fire deferred alert
     ["sound_id"]         = 8960,   -- READY_CHECK
     ["sound_label"]      = "",     -- empty = use catalog/SOUNDKIT/Leatrix lookup
-    -- Dialog default: per warcraft.wiki.gg, default volume is 1.0 (full) and
+    -- Dialog default: the game's default Dialog volume is 1.0 (full) and
     -- the channel carries near-zero traffic in combat (NPC speech / cinematics
     -- only). Master is the root mixer but suffers perceptual masking against
     -- short LSM samples; SFX shares a bus with combat sound effects. Dialog

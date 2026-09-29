@@ -10,8 +10,12 @@
 --   local f = CobySuite.UI.CreateWindow({
 --     name          = "MyAddonOptionsWindow",  -- global name; needed for escapeCloses
 --     title         = "My Addon Settings",     -- TitleText
+--     icon          = "Interface\Icons\INV_Misc_Book_09",  -- optional, 16px left of the title
 --     width = 400, height = 190,
---     strata        = "HIGH",                  -- default HIGH
+--     strata        = "MEDIUM",                -- default MEDIUM: the layer of Blizzard's own
+--                                              -- panels, so a click brings either forward;
+--                                              -- only a dialog that asks something passes
+--                                              -- "DIALOG" (Cobanyte, 2026-09-28)
 --     movable       = true,                    -- default true
 --     resizable     = { minWidth = 600, minHeight = 400, maxWidth = 1200, maxHeight = 800 },  -- optional
 --     solidBackground = true,                  -- default true (U.Colors.WINDOW_BG)
@@ -111,8 +115,16 @@ function UI.CreateWindow(opts)
     local d = opts.persist and opts.persist.defaults or {}
     f:SetPoint(d.point or "CENTER", UIParent, d.relPoint or "CENTER", d.x or 0, d.y or 0)
   end
-  f:SetFrameStrata(opts.strata or "HIGH")
-  if opts.toplevel ~= false then f:SetToplevel(true) end
+  -- MEDIUM with Blizzard's panels (the achievement and character windows
+  -- are MEDIUM and toplevel): a click raises whichever window it lands on,
+  -- and a window coming up is raised over the others (Cobanyte, 2026-09-28:
+  -- the item details window, in DIALOG, stayed over the achievement window
+  -- it had opened)
+  f:SetFrameStrata(opts.strata or "MEDIUM")
+  if opts.toplevel ~= false then
+    f:SetToplevel(true)
+    f:HookScript("OnShow", function(self) self:Raise() end)
+  end
   if opts.clampToScreen ~= false then f:SetClampedToScreen(true) end
   f:EnableMouse(true)
 
@@ -121,11 +133,22 @@ function UI.CreateWindow(opts)
     solidBg:SetAllPoints()
     local c = opts.backgroundColor or U.Colors.WINDOW_BG
     solidBg:SetColorTexture(c[1], c[2], c[3], c[4])
-    f.SolidBackground = solidBg
   end
 
   if opts.title and f.TitleText then
     f.TitleText:SetText(opts.title)
+  end
+
+  -- The addon's icon just left of the title. TitleText is anchored by its
+  -- TOP only, so it is as wide as its text and the icon follows it when the
+  -- title changes.
+  if opts.icon and f.TitleText then
+    local icon = f:CreateTexture(nil, "OVERLAY")
+    icon:SetSize(16, 16)
+    icon:SetPoint("RIGHT", f.TitleText, "LEFT", -4, 0)
+    icon:SetTexture(opts.icon)
+    icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    f.TitleIcon = icon
   end
 
   -- Moving and sizing start on the left button only (RegisterForDrag covers
@@ -170,6 +193,15 @@ function UI.CreateWindow(opts)
     f.ResizeGrip = UI.CreateResizeGrip(f)
     f.ResizeGrip:SetScript("OnMouseDown", function(_, button)
       if button ~= "LeftButton" then return end
+      -- Anchored by its top-left corner where it stands, so sizing from the
+      -- bottom-right moves only that corner: a window anchored at its
+      -- center could jump past the cursor when sizing began. Both are in the
+      -- window's own units, measured from the screen's bottom-left.
+      local left, top = f:GetLeft(), f:GetTop()
+      if left and top then
+        f:ClearAllPoints()
+        f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+      end
       f._sizing = true
       f:StartSizing("BOTTOMRIGHT")
     end)
@@ -208,13 +240,14 @@ end
 ---------------------------------------------------------------------------
 -- UI.RegisterSettingsCategory: an entry under Options > AddOns
 --
--- Suite addons keep their settings in their own window (CreateWindow +
--- CreateFormLayout). This registers a small canvas page in Blizzard's
+-- Suite addons keep their settings in their own window
+-- (CreateSettingsWindow). This registers a small canvas page in Blizzard's
 -- Options > AddOns list so the addon is found where players look first:
 -- the name in the brand colour, the version, a description and a button
 -- that closes the options panel and opens the addon's window. Returns the
 -- Settings category (category:GetID() for Settings.OpenToCategory) and
--- the canvas frame.
+-- the canvas frame, which is also kept in UI.SettingsPages[name] with its
+-- button as canvas.OpenButton, for the taint suites.
 --
 --   CobySuite.UI.RegisterSettingsCategory({
 --     name        = "Public Order Whisper",   -- list entry and page title
@@ -262,12 +295,23 @@ function UI.RegisterSettingsCategory(opts)
     text  = opts.buttonText or "Open Settings",
     point = { "TOPLEFT", last, "BOTTOMLEFT", 0, -16 },
     onClick = function()
-      if SettingsPanel and SettingsPanel:IsShown() then
-        SettingsPanel:Close()
+      -- Never SettingsPanel:Close() from addon code: it goes back to the
+      -- game menu through ToggleGameMenu, which then runs the Escape chain
+      -- with this addon's taint (SpellStopCasting, SpellStopTargeting and
+      -- ClearTarget forbidden, 12.1; Recollect 0.0.1c curators' reports,
+      -- 2026-09-28), and with Blizzard settings changed but not applied it
+      -- shows a StaticPopup. HideUIPanel hides it through the panel
+      -- manager's secure delegate; with unapplied changes the panel stays
+      -- open under the addon's window.
+      if SettingsPanel and SettingsPanel:IsShown() and not SettingsPanel:HasUnappliedSettings() then
+        HideUIPanel(SettingsPanel)
       end
       opts.onOpen()
     end,
   })
+  canvas.OpenButton = button   -- the taint suites click the real button
+  UI.SettingsPages = UI.SettingsPages or {}
+  UI.SettingsPages[opts.name] = canvas
 
   if opts.slash then
     local hint = canvas:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
@@ -278,6 +322,5 @@ function UI.RegisterSettingsCategory(opts)
 
   local category = Settings.RegisterCanvasLayoutCategory(canvas, opts.name)
   Settings.RegisterAddOnCategory(category)
-  canvas.Category = category
   return category, canvas
 end

@@ -13,6 +13,7 @@
 -------------------------------------------------------------------------------
 
 local Leatrix = ApexFury.Leatrix
+local hookedPanels = setmetatable({}, { __mode = "k" })   -- the Sound panels whose OnShow is hooked
 
 local lastSelected   -- last-clicked row entry ("path#fdid")
 local hookedButtons  -- weak set of row buttons we've already hooked
@@ -117,8 +118,10 @@ function Leatrix.TryHook()
 
   hookedButtons = hookedButtons or setmetatable({}, { __mode = "k" })
 
-  if not panel.ApexFuryHookedShow then
-    panel.ApexFuryHookedShow = true
+  -- kept here, never as a field on Leatrix's own frame (the taint suite
+  -- lists every field an addon writes onto another addon's frame)
+  if not hookedPanels[panel] then
+    hookedPanels[panel] = true
     panel:HookScript("OnShow", function(self)
       HookRowButtons(self)
     end)

@@ -17,13 +17,13 @@ ApexFury never tries to read your stacks. It tracks your Dragonrage cast, your e
 ## How It Works
 
 1. **You cast Dragonrage.** ApexFury starts a timer for when the 4th stack will land. With default settings (Rising Fury ticks every 6s, threshold 4), that's 18 seconds from your cast.
-2. **You cast empowers (Fire Breath / Eternity Surge) inside Dragonrage.** Each one extends Dragonrage via Animosity. ApexFury tracks them and updates its timer to match.
+2. **You cast empowers (Fire Breath / Eternity Surge) inside Dragonrage.** Each one extends Dragonrage via Animosity. ApexFury counts them to know whether Dragonrage will last long enough for your 4th stack; the alert time itself stays at 18 seconds, and with no empower at all Dragonrage ends too soon and ApexFury stays silent.
 3. **At the 4th-stack moment, the sound plays.**
-4. **If the 4th-stack moment arrives while you're out of combat** (between pulls in a dungeon, for instance), the alert holds and plays the instant you re-enter combat. If Dragonrage has already ended by then, it plays only with Rising Fury rank 3 and only while the linger has at least your minimum-remaining setting left; otherwise it cancels cleanly instead of firing late.
+4. **With Combat-only mode on (the default), if the 4th-stack moment arrives while you're out of combat** (between pulls in a dungeon, for instance), the alert holds and plays the instant you re-enter combat. If Dragonrage has already ended by then, it plays only with Rising Fury rank 3 and only while the linger has at least your minimum-remaining setting left; otherwise it cancels cleanly instead of firing late.
 
 ## Prerequisites
 
-ApexFury checks your class, spec, and talents at login and any time you change them. If anything's missing it tells you in chat and stops working in the background until you fix it. A `/reload` is almost never needed: if your talents load late, ApexFury checks again on its own, and again whenever you change talents or zone.
+ApexFury checks your class, spec, and talents at login and any time you change them. It switches itself off, and tells you in chat, if you are not a Devastation Evoker or have not taken Rising Fury. Without Animosity it warns you and keeps running, since alerts at 3 stacks still work. A `/reload` is almost never needed: if your talents load late, ApexFury checks again on its own, and again whenever you change talents or zone.
 
 | What you need | Why |
 |---|---|
@@ -49,14 +49,14 @@ Edge cases it handles:
 ## Slash Commands
 
 ```
-/af                                Open settings window
+/af                                Open settings window (also /af settings)
 /af help                           Command list
-/af status                         Print current settings to chat
+/af status                         Print current settings and the talent check to chat
 /af scan [name]                    List active player buffs (find spell IDs)
-/af overlay                        Toggle on-screen status frame
+/af overlay                        Toggle on-screen status frame (also /af show)
 /af debug                          Toggle debug log window
 /af channel [dialog|master|sfx]    Show or change the audio channel
-/af reset                          Restore defaults
+/af reset                          Restore every setting to its default at once (no Apply needed)
 /af version                        Print version
 ```
 
@@ -64,13 +64,13 @@ Edge cases it handles:
 
 ## Settings
 
-Open with `/af`. The settings are grouped into three categories on the left: Behavior, Trigger and Sound. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults fills in every default, and nothing changes until you press Apply. The first time after logging in or a `/reload`, open it out of combat; ApexFury will not build the window during combat.
+Open with `/af`. The settings are grouped into three categories on the left: Behavior, Trigger and Sound. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults fills in every default, and nothing changes until you press Apply. Drag the window's bottom-right corner to make it bigger; it keeps that size. The first time after logging in or a `/reload`, open it out of combat; ApexFury will not build the window during combat.
 
 **Behavior**
-- Alerting enabled (master switch)
-- Combat-only mode (defer alerts that would fire out of combat)
-- Actionability gate (defer alerts while in vehicle, mounted, possessed, or stunned/CC'd; re-fires on recovery)
-- Verbose debug logging (records every cast and empower to the debug window. Useful for bug reports.)
+- Alerting enabled (master switch, on by default)
+- Combat-only mode (on by default; defer alerts that would fire out of combat)
+- Actionability gate (on by default; defer alerts while in vehicle, mounted, possessed, or stunned/CC'd; re-fires on recovery)
+- Verbose debug logging (off by default; records every cast and empower to the debug window. Useful for bug reports.)
 
 **Trigger**
 - Trigger spell ID (default 375087 = Dragonrage)
@@ -80,9 +80,11 @@ Open with `/af`. The settings are grouped into three categories on the left: Beh
 
 **Sound**
 
-Type to search. Filter by source. Click any row to pick it, then press Apply. The speaker icon next to "Selected" plays the sound you picked on the channel you picked.
+Type to search. Filter by source. Click any row to hear it on your chosen channel and pick it, then press Apply. The speaker icon next to "Selected" plays the sound you picked on the channel you picked.
 
 The audio channel dropdown picks which WoW mix bus the alert plays on. Dialog is the default (nearly empty in combat, best chance to be heard). Master and SFX are also available if you'd rather route through those.
+
+The Debug Log and Overlay buttons at the bottom of the window open the same windows as `/af debug` and `/af overlay`.
 
 ## Library Support
 
@@ -90,7 +92,7 @@ ApexFury picks up sounds from whatever you already have. No config required.
 
 | Source | What you get |
 |---|---|
-| Blizzard SoundKit (always on) | ~800 in-game sounds, auto-categorized into UI / Combat / Voice / Item / Alert / Effect |
+| Blizzard SoundKit (always on) | Hundreds of in-game sounds, auto-categorized into UI / Combat / Voice / Item / Alert / Effect |
 | LibSharedMedia-3.0 (optional) | Every shared sound from every addon you've installed. Astral, Causese, BugSack, WIM, ElvUI, etc. Pack names are auto-detected, so you can filter by addon. |
 | Leatrix Sounds (optional) | ~275,000 sounds from Leatrix's bundled catalog. Hit *Open Leatrix*, click any row in their browser, press *Grab Sound*, then press Apply to keep it. (Leatrix keeps its catalog to itself, so those sounds don't show up in ApexFury's search.) |
 
@@ -101,10 +103,10 @@ The more libraries you have installed, the bigger the catalog. Default sound is 
 `/af overlay` toggles a movable on-screen status window. Seven lines, each with a hover tooltip:
 
 1. **Status.** What the addon is doing right now: idle, counting down, fired, suppressed, or holding (waiting for combat, vehicle exit, etc., or for half a second at the 4th-stack moment in case an empower arrives late).
-2. **DR remaining.** Time left on Dragonrage. Out of combat it is read once from the buff right after your cast and after each empower (marked "read"); otherwise, and always in combat (Blizzard hides the buff timer there), it is estimated.
+2. **DR remaining.** Time left on Dragonrage. Out of combat it is read once from the buff right after your cast and after each empower (marked "read"); otherwise, and always in combat (Blizzard hides the buff timer there), it is estimated. After Dragonrage ends it shows the estimated Rising Fury linger instead.
 3. **Empowers cast + stacks.** How many empowers you've used this Dragonrage, how many Rising Fury stacks you have so far, and in brackets how many you'll end up with when Dragonrage ends if you cast nothing more. Also shows whether you're in combat.
 4. **Fired after.** Exact seconds from your Dragonrage cast to the moment the sound played. Frozen once the cycle resolves.
-5. **Last alert.** How long ago the last sound played.
+5. **Last alert.** How long ago the last sound played. Blank after two minutes.
 6. **Verdict.** What ApexFury would do if your 4th stack landed right now: fire, hold, or cancel. Useful for understanding why an alert didn't go off.
 7. **Talent gate.** Whether your spec, Rising Fury rank, and Animosity are good. Tells you why the addon is inactive if it is.
 
@@ -126,7 +128,7 @@ Useful for sanity checks and bug reports. Hide it when you don't need it.
 
 **It says my spell ID is unknown.**
 
-- `/af scan` lists every active player buff with its spell ID. `/af scan fury` filters by name.
+- `/af scan` lists every active player buff with its spell ID, and `/af scan fury` filters by name. Run it out of combat and outside Mythic+ or PvP; while the game hides aura data it tells you so instead of listing.
 
 ## License
 
@@ -140,7 +142,7 @@ For bug reports, the cleanest path is the debug log. It's self-contained: it inc
 
 1. In `/af`, under **Behavior**, tick **Verbose debug logging** and press **Apply**. Verbose adds every cast and empower to the log, which is what makes most bugs traceable.
 2. Reproduce the issue.
-3. Run `/af debug` to open the debug window. Copy the last ~250 entries.
+3. Run `/af debug` to open the debug window, press **Copy Last 250**, and copy the text.
 4. Email them to **hackythings@gmail.com** with a sentence about what you were doing.
 
 **Other channels:**

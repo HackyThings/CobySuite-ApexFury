@@ -250,7 +250,7 @@ local function BuildSound(panel, win)
         "The sound that will play when the threshold is reached. Pick a different one in the browser below.",
         "ANCHOR_RIGHT")
 
-      row.TestButton = UI.CreateIconButton(row, {
+      UI.CreateIconButton(row, {
         size        = 22,
         texture     = "Interface\\COMMON\\VoiceChat-Speaker",
         vertexColor = { 0.7, 0.9, 1.0 },
@@ -301,7 +301,7 @@ local function BuildSound(panel, win)
           onClick = function() ApexFury.Leatrix.OpenPanel() end,
         })
 
-        row.GrabButton = UI.CreateButton(row, {
+        UI.CreateButton(row, {
           size  = { 96, 22 },
           text  = "Grab Sound",
           point = { "LEFT", row.OpenButton, "RIGHT", 6, 0 },
@@ -353,7 +353,6 @@ local function BuildSound(panel, win)
       else
         tip:SetText("|cFF888888Tip: Install |cFFFFD200Leatrix Sounds|r|cFF888888 (~275k FileDataIDs) or a |cFFFFD200LibSharedMedia|r|cFF888888 pack (Astral, Causese, etc.) for thousands more sounds.|r")
       end
-      row.Tip = tip
     end,
   }
 
@@ -378,7 +377,6 @@ local function BuildSound(panel, win)
       })
       browser:SetPoint("TOPLEFT", row, "TOPLEFT", edge, 0)
       browser:SetPoint("BOTTOMRIGHT", panel.content:GetParent(), "BOTTOMRIGHT", -edge, edge)
-      row.Browser = browser
     end,
   }
 end

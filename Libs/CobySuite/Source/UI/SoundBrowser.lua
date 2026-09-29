@@ -25,8 +25,6 @@
 --
 -- Public methods on the returned frame:
 --   browser:Refresh()              re-pull entries (e.g. after addon load)
---   browser:SetSearchText(s)
---   browser:SetSourceFilter(name)  "All" or a specific source
 --   browser:RefreshSelection()     re-read getCurrentValue + recolor rows
 -------------------------------------------------------------------------------
 
@@ -80,7 +78,7 @@ end
 
 ---------------------------------------------------------------------------
 -- Sort: read pre-computed sort keys from the entry (set at creation
--- time by CobySuite.Sound.MakeEntry). Avoids per-comparison string
+-- time by MakeEntry in Sound/Main.lua). Avoids per-comparison string
 -- stripping / lowering.
 ---------------------------------------------------------------------------
 local SORT_KEY_FIELDS = {
@@ -497,22 +495,6 @@ function SoundBrowser.Create(parent, opts)
     Refresh()
   end
 
-  function frame:SetSearchText(s)
-    searchText = s or ""
-    searchEB:SetText(searchText)
-    Refresh()
-  end
-
-  -- Every source change goes through RebuildAllEntries, as the dropdown
-  -- does, so a catalog that changed since the last pull is picked up (the
-  -- call is cheap when nothing changed)
-  function frame:SetSourceFilter(name)
-    activeSource = name or "All"
-    sourceDD:OverrideText(activeSource)
-    RebuildAllEntries()
-    Refresh()
-  end
-
   function frame:RefreshSelection()
     if not scrollBox then return end
     local cur = getCurrentValue()
@@ -522,9 +504,6 @@ function SoundBrowser.Create(parent, opts)
       end
     end)
   end
-
-  function frame:GetSourceFilter() return activeSource end
-  function frame:GetSearchText()   return searchText end
 
   -- Initial fill (deferred one frame so PLAYER_LOGIN-time addons that
   -- register LSM sounds late still get picked up)

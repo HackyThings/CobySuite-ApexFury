@@ -39,8 +39,8 @@
 -- every line: the addon's name, then a line per command and help-only entry
 -- in table order, a blank line and a heading for each `section`, then the
 -- version and help lines and the footer. On each line the command the player
--- types is green, what they fill in (the part of `usage` from its first < or
--- [ after a space) a paler green, and the description gray (U.Colors.HELP_*).
+-- types is gold, what they fill in (the part of `usage` from its first < or
+-- [ after a space) a paler gold, and the description white (U.Colors.HELP_*).
 -- Slash.HelpLines(opts) returns that block without printing it.
 ---------------------------------------------------------------------------
 CobySuite_ApexFury.Slash = CobySuite_ApexFury.Slash or {}

@@ -1,2 +1,2 @@
 -- Written by the release build. Identifies this embedded copy of the shared library.
-CobySuite_ApexFury.BuildInfo = { embedded = true, host = "ApexFury", commit = "ec0550e", dirty = false }
+CobySuite_ApexFury.BuildInfo = { embedded = true, host = "ApexFury", commit = "f503fbf", dirty = false }

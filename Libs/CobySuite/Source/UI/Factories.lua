@@ -13,7 +13,8 @@ end
 ---------------------------------------------------------------------------
 -- Tooltip helpers
 --
--- Five flavors, all attach OnEnter/OnLeave scripts to `frame`:
+-- Five flavors attach OnEnter/OnLeave scripts to `frame`, and
+-- PopulateBrandedTooltip fills a tooltip it is handed:
 --
 --   AddTooltip(frame, text, anchor)
 --     Plain wrapped text.
@@ -22,8 +23,8 @@ end
 --     Blizzard item tooltip. itemIDOrFunc can be a number or a function
 --     that returns one (called per-hover, useful for reusable rows).
 --     opts.compareOnShift = true → calls GameTooltip_ShowCompareItem
---                                   (Blizzard gates the visible compare
---                                    panes on shift internally).
+--                                   while Shift is held (checked here;
+--                                    Blizzard's function does not check it).
 --     opts.cleanShopping  = true → also hides ShoppingTooltip1/2 on leave.
 --
 --   AddSpellTooltip(frame, spellIDOrFunc, anchor)
@@ -44,20 +45,19 @@ end
 --                                builder every frame for cursor-tracking
 --                                tooltips (e.g. chart hover read-outs).
 --
---   AddBrandedTooltip(frame, opts)
---     Tooltip for "addon entry" surfaces (minimap button, addon
---     compartment menu, splash). Provides a consistent look across
---     CobySuite addons:
+--   PopulateBrandedTooltip(tooltip, opts)
+--     Fills a tooltip it is handed (it attaches no scripts) for "addon
+--     entry" surfaces (minimap button, addon compartment menu, splash).
+--     Provides a consistent look across CobySuite addons:
 --       opts.brandColor  hex "FF8800" or {r,g,b} → title color
 --       opts.title       string
 --       opts.subtitle    string (smaller, gray)
 --       opts.body        { "line", ... } or function returning that
 --       opts.keys        { { key=, desc= }, ... } → keybind hints
 --                         (gold key, gray colon, white desc)
---       opts.anchor      "ANCHOR_RIGHT" (default)
---       opts.owner       a frame to own the tooltip instead of `frame`
---     PopulateBrandedTooltip(tooltip, opts) fills a tooltip it is handed;
---     with opts.owner it calls SetOwner itself.
+--       opts.owner       a frame; given, it calls
+--                         tooltip:SetOwner(opts.owner, opts.anchor) first
+--       opts.anchor      "ANCHOR_RIGHT" (default), used with opts.owner
 ---------------------------------------------------------------------------
 function UI.AddTooltip(frame, text, anchor)
   frame:SetScript("OnEnter", function(self)
@@ -281,19 +281,6 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
   tooltip:Show()
 end
 
--- opts.owner, when given, owns the tooltip instead of the hovered frame
-function UI.AddBrandedTooltip(frame, opts)
-  opts = opts or {}
-  local anchor = opts.anchor or "ANCHOR_RIGHT"
-  frame:SetScript("OnEnter", function(self)
-    if not opts.owner then
-      GameTooltip:SetOwner(self, anchor)
-    end
-    UI.PopulateBrandedTooltip(GameTooltip, opts)
-  end)
-  frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
-end
-
 ---------------------------------------------------------------------------
 -- CreateButton
 ---------------------------------------------------------------------------
@@ -355,7 +342,6 @@ function UI.CreateToolbar(parent, buttons, opts)
     prevBtn = btn
   end
 
-  toolbar._buttons = btnRefs
   return toolbar, btnRefs
 end
 
@@ -737,7 +723,7 @@ end
 ---------------------------------------------------------------------------
 -- Standalone widget factories
 --
--- Six widgets, all (parent, opts) -> widget. Designed to be usable both
+-- Seven widgets, all (parent, opts) -> widget. Designed to be usable both
 -- as freestanding controls (toolbars, in-row inputs, monitoring widgets)
 -- and as the building blocks of CreateFormLayout below.
 --
@@ -989,7 +975,6 @@ function UI.CreateNumberInput(parent, opts)
   eb:SetSize(opts.width or 80, opts.height or U.EditBoxHeight.INPUT)
   eb:SetAutoFocus(opts.autoFocus or false)
   if opts.maxLetters then eb:SetMaxLetters(opts.maxLetters) end
-  if opts.numeric ~= false then eb:SetNumeric(opts.numericInput or false) end
   ApplyPoint(eb, opts.point)
 
   WireEditBoxCommit(eb, opts)
@@ -1322,10 +1307,6 @@ function UI.CreateCopyField(parent, opts)
     return displayText, rawText
   end
 
-  function field:ScrollToStart()
-    ScrollEditBoxToStart(self)
-  end
-
   field:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
   field:SetScript("OnEditFocusLost", function(self)
     copying = false
@@ -1574,4 +1555,74 @@ function UI.CreateMultiLineInput(parent, opts)
 
   frame._optionKey = opts.optionKey
   return frame
+end
+
+---------------------------------------------------------------------------
+-- CreateMetricList(parent, metrics, opts): live label and value rows
+--
+-- One row per metric { label, getValue, tooltip }, each anchored across
+-- parent, shaded every other row: the label in gray, the value (getValue()'s
+-- text) beside it. Returns { rows, Refresh }: Refresh() reads every getter
+-- again under pcall, and one that errors shows opts.errorText. When and how
+-- often to refresh (a throttle, memory sampling) is the caller's.
+--
+--   opts.rowHeight   default 18
+--   opts.labelWidth  default 140
+--   opts.valueWidth  a fixed width; without it the value runs to the row's
+--                    right edge
+--   opts.padding     left and right inset, default 10
+--   opts.top         the first row's offset from parent's top, default 0
+--   opts.errorText   default "error" in U.Colors.TEXT_RED
+---------------------------------------------------------------------------
+function UI.CreateMetricList(parent, metrics, opts)
+  opts = opts or {}
+  local rowHeight, labelWidth = opts.rowHeight or 18, opts.labelWidth or 140
+  local padding, top = opts.padding or 10, opts.top or 0
+  local errorText = opts.errorText or U.WrapColor(U.Colors.TEXT_RED, "error")
+  local list = { rows = {} }
+
+  for i, metric in ipairs(metrics) do
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(rowHeight)
+    row:SetPoint("TOPLEFT", padding, -((i - 1) * rowHeight) - top)
+    row:SetPoint("TOPRIGHT", -padding, -((i - 1) * rowHeight) - top)
+    U.AddAlternatingRowBg(row, i)
+
+    local label = row:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
+    label:SetPoint("LEFT", 0, 0)
+    label:SetWidth(labelWidth)
+    label:SetJustifyH("LEFT")
+    label:SetText(metric.label)
+    local lg = U.Colors.LABEL_GRAY
+    label:SetTextColor(lg[1], lg[2], lg[3])
+
+    local value = row:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
+    value:SetPoint("LEFT", label, "RIGHT", 4, 0)
+    if opts.valueWidth then
+      value:SetWidth(opts.valueWidth)
+    else
+      value:SetPoint("RIGHT", -4, 0)
+    end
+    value:SetJustifyH("LEFT")
+    value:SetText("--")
+
+    row.Label = label
+    row.Value = value
+    if metric.tooltip then
+      row:EnableMouse(true)
+      UI.AddTooltip(row, metric.tooltip)
+    end
+    list.rows[i] = row
+  end
+
+  function list.Refresh()
+    for i, metric in ipairs(metrics) do
+      local row = list.rows[i]
+      if row then
+        local ok, val = pcall(metric.getValue)
+        row.Value:SetText(ok and val or errorText)
+      end
+    end
+  end
+  return list
 end

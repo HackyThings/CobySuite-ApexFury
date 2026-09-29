@@ -106,13 +106,13 @@ local inFlightEmpower       -- spellID of an empower channel with EMPOWER_START
 local expectedTriggerEnd    -- predicted absolute time the trigger buff will
                             -- end. Drives every in-combat timing decision.
 local alertFired            -- bool: sound has been played
-local alertPending          -- bool: timer elapsed but waiting for combat
+local alertPending          -- bool: alert moment reached but deferred (out of combat or unable to act)
 local alertSuppressed       -- bool: alert was cancelled
 local lastFiredTime         -- last time alert actually played sound
 local lastFiredOffset       -- precise elapsed seconds from cast to fire
 local lastSuppressOffset    -- precise elapsed seconds from cast to suppression
 local lastSuppressReason    -- "linger_expired" / "rf_too_short" / "trigger_too_short" / "rf_expired" / "disabled" / "death" / "zone" / nil
-local pendingTimer          -- C_Timer ticker handle (or nil)
+local pendingTimer          -- the alert moment's one-shot C_Timer handle (or nil)
 local pendingDeferReason    -- "ooc" / "vehicle" / "vehicle_ui" / "mounted" / "possessed" / "loss_of_control"
 local pendingPollTimer      -- C_Timer.NewTicker handle while alertPending; resolves the deferral
 local provisionalUntil      -- while a too-short verdict waits for a late
@@ -540,7 +540,6 @@ local function FireAlert(reasonContext, settling)
   end
 
   alertFired = true
-  alertPending = false
 
   -- WoW's sound mixer can reject PlaySound/PlaySoundFile dispatches under
   -- heavy combat (channel saturation). On failure, surface it to the log
@@ -1201,9 +1200,10 @@ function Watcher.Start()
 end
 
 ---------------------------------------------------------------------------
--- Test seams for ApexFury's WatcherSuite (Source/Tests). The suite drives
--- the state machine on a fake clock and timer queue, with combat,
--- actionability and the aura reader under its control; every setter takes
+-- Test seams for ApexFury's suites (Source/Tests). The Watcher and Overlay
+-- suites drive the state machine on a fake clock and timer queue, with
+-- combat, actionability and the aura reader under their control, and the
+-- Config suite saves and restores the player's cycle; every setter takes
 -- nil to go back to the real game state. Nothing here writes a Blizzard
 -- global.
 ---------------------------------------------------------------------------
@@ -1238,4 +1238,32 @@ Watcher._test = {
   -- Trigger aura reads attempted since load (the one-shot read is the only one)
   GetAuraReadCount = function() return auraReads end,
   IsEventRegistered = function(event) return watcherFrame:IsEventRegistered(event) end,
+
+  -- The cycle's outcome and the last alert time, to put back with Restore
+  -- after a suite. Timer handles are not kept: the suites run only while no
+  -- cycle is waiting on one (Setup.lua's watcher_idle prerequisite).
+  Save = function()
+    return {
+      castTime = castTime, alertScheduledFor = alertScheduledFor,
+      observedTriggerEnd = observedTriggerEnd, empowerCount = empowerCount,
+      expectedTriggerEnd = expectedTriggerEnd, alertFired = alertFired,
+      alertSuppressed = alertSuppressed, lastFiredTime = lastFiredTime,
+      lastFiredOffset = lastFiredOffset, lastSuppressOffset = lastSuppressOffset,
+      lastSuppressReason = lastSuppressReason,
+    }
+  end,
+  Restore = function(saved)
+    ResetState()
+    castTime = saved.castTime
+    alertScheduledFor = saved.alertScheduledFor
+    observedTriggerEnd = saved.observedTriggerEnd
+    empowerCount = saved.empowerCount or 0
+    expectedTriggerEnd = saved.expectedTriggerEnd
+    alertFired = saved.alertFired or false
+    alertSuppressed = saved.alertSuppressed or false
+    lastFiredTime = saved.lastFiredTime
+    lastFiredOffset = saved.lastFiredOffset
+    lastSuppressOffset = saved.lastSuppressOffset
+    lastSuppressReason = saved.lastSuppressReason
+  end,
 }

@@ -107,8 +107,8 @@ local function UpdateDisplay()
   if state.alertPending then
     local elapsed = state.castTime and (now - state.castTime) or 0
     -- Linger past its predicted end? The watcher's stale-pending cleanup
-    -- only fires at +45s after cast, so between actual linger expiry and
-    -- that cleanup the overlay would otherwise show a stale "PENDING."
+    -- only fires 45s after the alert was deferred, so between actual linger
+    -- expiry and that cleanup the overlay would otherwise show a stale "PENDING."
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[1]:SetText(string.format(
@@ -336,8 +336,6 @@ end
 -- Public API
 ---------------------------------------------------------------------------
 function Overlay.Show()
-  BuildFrame()
-
   -- Restore saved position (or center on first show)
   local s = APEX_FURY_UI_STATE and APEX_FURY_UI_STATE.overlay
   frame:ClearAllPoints()
@@ -381,7 +379,7 @@ end
 -- a /reload can all come mid-fight. Its OnUpdate only runs while it shows.
 BuildFrame()
 
--- For ApexFury's WatcherSuite: one display update and a line's text
+-- For ApexFury's Watcher and Overlay suites: one display update and a line's text
 Overlay._test = {
   Update = UpdateDisplay,
   GetLineText = function(i)
