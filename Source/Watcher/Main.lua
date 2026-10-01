@@ -54,6 +54,9 @@
 --      Only Rising Fury rank 3 has that linger: when the talent gate
 --      reports a lower rank, nothing is left once the predicted end has
 --      passed (LingerEligible). Unknown talent data keeps the linger.
+--      A 0.5s polling ticker catches changes with no dedicated event, and
+--      a pending alert still unresolved 45s after it was deferred is
+--      suppressed as "rf_expired" (ScheduleStalePendingCleanup).
 --   7. A "too short" verdict is provisional while a late empower could
 --      still extend the cycle: when FireAlert finds the predicted duration
 --      too short at or before expectedTriggerEnd + EMPOWER_LATENCY_GRACE
@@ -184,11 +187,13 @@ local ANIMOSITY_EXTENSION    = 5
 local ANIMOSITY_DIMINISHING  = 0.75
 
 -- Exposed for the Overlay's verdict-line preview, which must mirror this
--- module's CheckTriggerRanLongEnough / PredictedTriggerEnd math. Keeping
+-- module's CheckTriggerRanLongEnough / PredictedTriggerEnd / CanStillExtend
+-- math. Keeping
 -- the constants on the public module means a single edit here propagates
 -- to the overlay without cross-file drift.
 Watcher.THRESHOLD_BUFFER = THRESHOLD_BUFFER
 Watcher.DR_BASE_DURATION = DR_BASE_DURATION
+Watcher.EMPOWER_LATENCY_GRACE = EMPOWER_LATENCY_GRACE
 
 ---------------------------------------------------------------------------
 -- Clock, timers, combat and actionability state and the aura reader, each
@@ -275,10 +280,10 @@ end
 --
 -- Without Animosity, empowers don't extend Dragonrage at all: predicted
 -- end stays at the 18s base. We consult TalentGate's `hasAnimosity` flag
--- to know which formula applies. TalentGate is started before the watcher
--- activates the trigger cycle in normal startup order, but defaults to
--- "with Animosity" if the gate isn't ready yet (the gate's own warning
--- chat message is the user's signal that threshold ≥4 won't fire).
+-- to know which formula applies. Animosity is assumed unless the gate
+-- reports hasAnimosity == false (found at rank 0): no gate, or a nil
+-- reading (not found yet), keeps the formula. The gate's own warning chat
+-- message is the user's signal that threshold ≥4 won't fire.
 ---------------------------------------------------------------------------
 local function ComputeExpectedTriggerEnd()
   if not castTime then return nil end
@@ -570,8 +575,8 @@ local function FireAlert(reasonContext, settling)
 
   -- Cycle resolution summary. One always-on line that captures every
   -- relevant number from the cycle so post-pull review can verify each
-  -- decision without verbose mode. Suppress branches above also include
-  -- their own structured summaries.
+  -- decision without verbose mode. Every suppress branch above but
+  -- "disabled" logs its own summary.
   local predDur = (expectedTriggerEnd and castTime)
                   and (expectedTriggerEnd - castTime) or 0
   local lingerRemFinal = EstimateLingerRemaining()
@@ -596,7 +601,8 @@ end
 
 ---------------------------------------------------------------------------
 -- Actionability check: can the player meaningfully act on an alert RIGHT
--- NOW? Used by the timer-expiry path to defer alerts when the player is
+-- NOW? Used at the alert moment (timer or late empower) and by
+-- TryFirePending to defer, or keep deferring, alerts when the player is
 -- in a vehicle, mounted (incl. skyriding combat mounts on bosses like
 -- Dimensius P2 / Amirdrassil flying phase), possessed by a boss
 -- mind-control mechanic, or affected by stuns/fear/silences/etc.
@@ -638,9 +644,10 @@ end
 -- 45s elapses, ResetState will have nilled or replaced castTime and
 -- we don't want to clobber the new cycle's pending state.
 --
--- Worst-case linger end is castTime + max DR (with 4 empowers ≈ 31.67s)
--- + LINGER_MAX (default 20s) ≈ 52s after cast. Timer is already at +18s;
--- 45s from now safely covers the rest.
+-- Worst-case linger end is castTime + max DR (18s plus at most 20s from
+-- empowers, the Animosity series' limit) + LINGER_MAX (default 20s) ≈ 58s
+-- after cast. The deferral happens at the alert moment (+18s at the
+-- default threshold), so 45s from then covers it.
 ---------------------------------------------------------------------------
 local function ScheduleStalePendingCleanup()
   local snapshotCastTime = castTime
@@ -882,8 +889,8 @@ local function OnTriggerCast()
   alertScheduledFor = castTime + delay
 
   -- Surface the TalentGate input that drove ComputeExpectedTriggerEnd's
-  -- choice of formula. If hasAnimosity is unexpectedly false at cast time
-  -- (e.g. TalentGate hasn't finished initial evaluation, or read failure),
+  -- choice of formula. If hasAnimosity is false at cast time (Animosity
+  -- found at rank 0; a read failure gives nil, which keeps the formula),
   -- threshold ≥4 alerts will deterministically suppress as trigger_too_short
   -- and this is the line that explains why.
   local gate = ApexFury.GetTalentGate()
@@ -1211,9 +1218,6 @@ Watcher._test = {
   Reset                        = ResetState,
   OnTriggerCast                = OnTriggerCast,
   CountEmpower                 = CountEmpower,
-  OnAlertTimerExpired          = OnAlertTimerExpired,
-  TryFirePending               = TryFirePending,
-  FireAlert                    = FireAlert,
   EstimateLingerRemaining      = EstimateLingerRemaining,
   ComputeMaxStacksReached      = ComputeMaxStacksReached,
   ComputeProjectedStacksAtDrop = ComputeProjectedStacksAtDrop,

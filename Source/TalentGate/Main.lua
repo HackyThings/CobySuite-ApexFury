@@ -21,8 +21,10 @@
 --   1. Always-registered events: PLAYER_LOGIN, PLAYER_ENTERING_WORLD,
 --      PLAYER_SPECIALIZATION_CHANGED, ACTIVE_TALENT_GROUP_CHANGED,
 --      TRAIT_CONFIG_UPDATED. Cheap, low-frequency.
---   2. PLAYER_LOGIN does the initial evaluation + emit (speaks once unless
---      the state is "ready", which is silent).
+--   2. The login evaluation does the initial evaluation + emit (speaks once
+--      unless the state is "ready", which is silent). Core.lua calls Start
+--      from its own PLAYER_LOGIN handler, so Start runs it (IsLoggedIn);
+--      the PLAYER_LOGIN branch covers a Start made before login.
 --      PLAYER_ENTERING_WORLD silently re-evaluates (zone changes shouldn't
 --      spam chat) but emits on actual state transitions.
 --   3. The three talent events are debounced 0.5s (TRAIT_CONFIG_UPDATED
@@ -421,9 +423,8 @@ local function ApplyActivation()
 end
 
 ---------------------------------------------------------------------------
--- Color codes used in chat output. Two patterns:
---   * Negative state: red key phrase + cyan explanation
---   * Positive state: green key phrase + cyan explanation
+-- Color codes used in chat output: a red (bad), amber (degraded) or green
+-- (good) key phrase, with the explanation, when there is one, in cyan.
 -- Plain ASCII only: WoW's chat font (Friz Quadrata) doesn't have most
 -- unicode glyphs (⚠ ✓ ✗ render as boxes).
 ---------------------------------------------------------------------------
@@ -581,7 +582,7 @@ end
 
 ---------------------------------------------------------------------------
 -- Run a full evaluation. Updates `current`, applies activation and emits
--- transition chat (unless silent=true).
+-- transition chat when the state changed (or on the first login evaluation).
 --
 -- Incomplete talent data (ReadState's second result) is retried after 1, 2
 -- and 4 seconds. While Rising Fury is missing the state is not committed
@@ -631,11 +632,8 @@ local function Evaluate(opts)
   -- Emission gating: initial login always speaks; subsequent calls only on
   -- actual differences (so respec-spam debounces don't print 12 lines).
   local shouldEmit = isInitial or StateDiffers(prev, next)
-  if shouldEmit and not opts.silent then
-    EmitTransition(prev, next, isInitial)
-  end
-
   if shouldEmit then
+    EmitTransition(prev, next, isInitial)
     previousEmittedState = next
   end
 end
@@ -658,7 +656,7 @@ local debouncedEval = CobySuite_ApexFury.Utilities.Debounce(TRAIT_DEBOUNCE_SEC, 
     LogVerbose("Node cache wiped (spec or talent group changed in this burst)")
   end
 
-  Evaluate({ silent = false })
+  Evaluate()
 end)
 
 local function ScheduleDebouncedEval(reason)
@@ -725,9 +723,10 @@ function TalentGate.Start()
   frame:SetScript("OnEvent", OnEvent)
   Debug.Log("TALENTGATE", "Started")
 
-  -- If we're being started AFTER PLAYER_LOGIN already fired (e.g. addon
-  -- reloaded), evaluate immediately so the watcher activates without
-  -- waiting for the next zone change.
+  -- Core.lua calls Start from its own PLAYER_LOGIN handler (every login
+  -- and /reload), so this frame never sees that PLAYER_LOGIN: IsLoggedIn()
+  -- is already true and this is the login evaluation (0.1s later, as the
+  -- PLAYER_LOGIN branch would do).
   if IsLoggedIn and IsLoggedIn() then
     After(0.1, function()
       Evaluate({ isInitial = true })

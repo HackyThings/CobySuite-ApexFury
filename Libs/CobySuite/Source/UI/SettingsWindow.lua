@@ -41,14 +41,15 @@
 --   local window = CobySuite.UI.CreateSettingsWindow({
 --     name    = "MyAddonSettingsWindow",   -- global name: Escape closes it; the Defaults popup is <name>DefaultsPopup
 --     title   = "My Addon - Settings",
---     icon    = "Interface\Icons\INV_Misc_Book_09",  -- optional, left of the title (CreateWindow)
+--     icon    = "Interface\\Icons\\INV_Misc_Book_09",  -- optional, left of the title (CreateWindow)
 --     config  = MyAddon.Config,            -- a CobySuite.Config.New instance (Get, Set, Defaults, CheckValue)
 --     persist = { svTable = function() return MY_ADDON_WINDOW_STATE end, key = "settings" },
---     width   = 680, height = 480,         -- the defaults; the sidebar takes 140 of the width when shown
+--     width   = 680, height = 480,         -- the defaults; the sidebar and its gap take 144 of the width when shown
 --     resizable = { maxWidth = 1180, maxHeight = 980 },  -- optional bounds; false keeps the size fixed
+--     strata  = "MEDIUM",                  -- optional; CreateWindow's default MEDIUM
 --     watch   = { bus = MyAddon.EventBus, event = MyAddon.Events.ConfigChanged },   -- optional
 --     onApply = function(changes, window) end,   -- after Apply: changes[key] = { old = ..., new = ... }
---     message = MyAddon.Utilities.Message,       -- prints a value Config.Set refused (default print)
+--     message = MyAddon.Utilities.Message,       -- prints Apply's notes: a refused or failed Set, an onApply error (default print)
 --     footerButtons = { { text = "Debug Log", width = 100, tooltip = "...", onClick = function(window) end } },
 --     categories = {
 --       { key = "general", label = "General", build = function(panel, window) ... end },
@@ -78,22 +79,22 @@
 -- field, or Apply, which commits the field being typed in first), and typing
 -- in it lights Apply and Cancel as soon as its text differs from where the
 -- edit started.
---   panel:Section(text)
---   panel:Description(text)
+--   panel:Section(text, opts)       -- opts: visibleWhen, refresh
+--   panel:Description(text, opts)
 --   panel:Checkbox{ key, label, tooltip, indent }
---   panel:Input{ key, label, tooltip, width = 55, x, numeric, digits, maxLetters, format(value) -> text,
+--   panel:Input{ key, label, tooltip, indent, width = 55, x, numeric, digits, maxLetters, format(value) -> text,
 --                parse(text) -> value or nil, validate(value) -> bool }
 --     x: the input's left edge (default right-aligned); digits: the box takes digits only. Text that
 --     still reads format(current value) keeps that value exactly, so clicking through a field that
 --     rounds its value (whole gold, a percent) stages nothing
 --   panel:Slider{ key, label, tooltip, min, max, step, format(value) -> text }
 --   panel:Dropdown{ key, label, tooltip, labels, values, tooltips, inline, width }   -- inline: label left, dropdown right
---   panel:Radio{ key, options = { { value =, label =, tooltip = } }, indent }
+--   panel:Radio{ key, options = { { value =, label =, tooltip = } }, tooltip, indent }   -- tooltip: for an option without one
 --   panel:Keybind{ key, label, tooltip, mouse, indent }   -- capture button and Clear (stages no value); mouse
 --                                                          --   also takes a click on the button: any of Middle, Mouse 4
 --                                                          --   and 5, and Left or Right with a modifier ("ALT-BUTTON1")
 --   panel:MultiLine{ key, height, maxLetters, maxBytes, placeholder, fontScale, tooltip, validate(text) -> bool }
---   panel:Button{ text, width, tooltip, onClick(window) }
+--   panel:Button{ text, width, tooltip, indent, onClick(window) }
 --   panel:Custom{ height, keys = { ... }, build(row, window, layout), refresh(row, window) }
 --     keys: settings the row stages itself, so Defaults covers them; refresh runs after every sync and stage
 --
@@ -227,13 +228,14 @@ end
 -- Staging
 ---------------------------------------------------------------------------
 
--- The config that owns a key: its category's (resolved now, possibly nil)
--- or the window's
+-- A config, or what a config function returns now (possibly nil)
 local function Resolve(config)
   if type(config) == "function" then return config() end
   return config
 end
 
+-- The config that owns a key: its category's (resolved now, possibly nil)
+-- or the window's
 function Settings:ConfigFor(key)
   local owner = self.keyConfig[key]
   if owner ~= nil then return Resolve(owner) end
@@ -420,7 +422,7 @@ function Settings:StageDefaults()
 end
 
 -- A setting changed outside the window: repaint it (every setting for a nil
--- key) unless its control holds a staged edit
+-- key) unless its control holds a staged edit or is being typed in
 function Settings:NotifyConfigChanged(key)
   if self.applying or not self:IsShown() then return end
   self:Populate(function(k)
@@ -1135,7 +1137,7 @@ function UI.CreateSettingsWindow(opts)
 
   window.DefaultsButton = UI.CreateButton(window, {
     size = { FOOTER_BUTTON_W, FOOTER_BUTTON_H }, text = "Defaults",
-    tooltip = "Stage the default of every setting in this window",
+    tooltip = "Put every setting in this window back to its default. Press Apply to keep them.",
     point = { "BOTTOMLEFT", 12, 12 },
     onClick = function() window.DefaultsPopup:Show() end,
   })

@@ -4,6 +4,25 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-10-01
+
+### Added
+
+- **A guide for new players.** The first time you log in with ApexFury, a short guide opens: what the alert does, the talents it needs, when the sound plays, picking your sound, the settings and the overlay. Open it any time with `/af guide` or the new Guide button in the settings window.
+- **What's New window.** After an update it opens by itself with what changed since the version you last played. `/af changelog` opens it any time.
+- ApexFury now has a page under the game's Options > AddOns, with a button that opens its settings.
+
+### Changed
+
+- The `/af` commands now match the other Coby addons (`/af guide` also answers to `/af tutorial`, `/af changelog` to `/af whatsnew` and `/af news`). Every command you already used still works.
+- ApexFury's icon now shows on its settings and debug log windows.
+
+### Fixed
+
+- Dragging the settings window's corner now stops at the edge of the screen. Before, pulling it past the edge could make the window keep growing with its corner off screen.
+- The overlay's Verdict line now checks the trigger duration before the Rising Fury linger, the same order the alert itself uses. With a threshold Dragonrage can't reach, it says "wait" only while a late Fire Breath or Eternity Surge could still extend Dragonrage, then "suppress: DR too short"; before, at Rising Fury rank 1 or 2, it blamed the linger for an alert that was really dropped as too short.
+- The overlay's Status tooltip now covers every reason a PENDING alert waits (out of combat, in a vehicle, mounted, possessed, or crowd-controlled), and explains EXPIRED.
+
 ## [1.0.4] - 2026-09-29
 
 ### Changed
@@ -53,7 +72,8 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 Initial release of ApexFury.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.5
 [1.0.4]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.4
 [1.0.3]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.3
 [1.0.2]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.2

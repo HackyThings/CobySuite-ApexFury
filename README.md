@@ -49,22 +49,30 @@ Edge cases it handles:
 ## Slash Commands
 
 ```
-/af                                Open settings window (also /af settings)
-/af help                           Command list
+/af                                Open settings window (also /af settings, /af config, /af options)
+/af guide                          Open or close the feature guide (also /af tutorial)
+/af changelog                      Open or close What's New: what changed in each version (also /af whatsnew, /af news)
+/af debug                          Toggle debug log window
 /af status                         Print current settings and the talent check to chat
 /af scan [name]                    List active player buffs (find spell IDs)
 /af overlay                        Toggle on-screen status frame (also /af show)
-/af debug                          Toggle debug log window
 /af channel [dialog|master|sfx]    Show or change the audio channel
 /af reset                          Restore every setting to its default at once (no Apply needed)
 /af version                        Print version
+/af help                           Command list
 ```
 
 `/apex` and `/apexfury` are aliases for `/af`.
 
+## Guide and What's New
+
+The first time you log in with ApexFury, its guide opens: a short tour in the order you'll need it (start here, the talents it needs, when the sound plays, your sound, the settings, the overlay). Click a heading to open or close it. Open it again any time with `/af guide` or the Guide button in the settings window.
+
+After an update, a What's New window lists what changed since the version you last played. `/af changelog` opens it any time.
+
 ## Settings
 
-Open with `/af`. The settings are grouped into three categories on the left: Behavior, Trigger and Sound. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults fills in every default, and nothing changes until you press Apply. Drag the window's bottom-right corner to make it bigger; it keeps that size. The first time after logging in or a `/reload`, open it out of combat; ApexFury will not build the window during combat.
+Open with `/af`, or from the game's Options > AddOns > ApexFury page. The settings are grouped into three categories on the left: Behavior, Trigger and Sound. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults asks first, then fills in every default, and nothing changes until you press Apply. Drag the window's bottom-right corner to make it bigger; it keeps that size. The first time after logging in or a `/reload`, open it out of combat; ApexFury will not build the window during combat.
 
 **Behavior**
 - Alerting enabled (master switch, on by default)
@@ -84,7 +92,7 @@ Type to search. Filter by source. Click any row to hear it on your chosen channe
 
 The audio channel dropdown picks which WoW mix bus the alert plays on. Dialog is the default (nearly empty in combat, best chance to be heard). Master and SFX are also available if you'd rather route through those.
 
-The Debug Log and Overlay buttons at the bottom of the window open the same windows as `/af debug` and `/af overlay`.
+The Guide, Debug Log and Overlay buttons at the bottom of the window open the same windows as `/af guide`, `/af debug` and `/af overlay`.
 
 ## Library Support
 

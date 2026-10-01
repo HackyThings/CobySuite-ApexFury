@@ -9,19 +9,18 @@
 }
 
 ApexFury.BRAND_COLOR = "FF8800"
+ApexFury.ICON = "Interface\\Icons\\inv12_apextalent_evoker_risingfury"   -- the TOC's IconTexture
 
 local ADDON_NAME = "ApexFury"
 local VERSION = C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.1.0"
+ApexFury.VERSION = VERSION
 
 -------------------------------------------------------------------------------
 -- Shared branding + namespace helpers
 -------------------------------------------------------------------------------
-local BRAND_OPEN = "|cFF" .. ApexFury.BRAND_COLOR
-local BRAND_CLOSE = "|r"
-
 -- Wrap text in the addon's brand color for chat output and window titles.
 function ApexFury.WrapBrand(text)
-  return BRAND_OPEN .. text .. BRAND_CLOSE
+  return CobySuite_ApexFury.Utilities.WrapColor(ApexFury.BRAND_COLOR, text)
 end
 
 -- Defensive read of TalentGate state. Returns the current state table, or
@@ -34,8 +33,9 @@ function ApexFury.GetTalentGate()
       or nil
 end
 
--- Audio channels accepted by ApexFury.Sound.Play. Listed in user-preference
--- order: "Dialog" is the default for in-combat audibility.
+-- The audio channels the alert may play on (the sound_channel setting's
+-- values). Listed in user-preference order: "Dialog" is the default for
+-- in-combat audibility.
 ApexFury.SOUND_CHANNELS = { "Dialog", "Master", "SFX" }
 ApexFury.SOUND_CHANNEL_ALIASES = {
   dialog = "Dialog", master = "Master", sfx = "SFX",
@@ -54,8 +54,12 @@ ApexFury.Message = Message
 -- Slash commands
 --
 -- CobySuite.Slash.Register owns the aliases, the SlashCmdList entry, the
--- dispatch, and the generated "help" and "version" commands. The command
--- bodies live here.
+-- dispatch, and the generated "help" and "version" commands. The suite's
+-- standard commands (settings, guide, changelog, debug, test) come from
+-- CobySuite.Slash.StandardCommands; ApexFury has no main window besides
+-- settings, so there is no show and bare /af opens the settings. The
+-- addon's own command bodies live here. The guide and the changelog load
+-- after Core.lua, so each handler resolves its module per call.
 -------------------------------------------------------------------------------
 local function ToggleSettings()
   if ApexFury.Config.ToggleSettings then
@@ -169,6 +173,14 @@ local function ToggleDebugWindow()
   end
 end
 
+local function ToggleGuide()
+  if ApexFury.Guide then ApexFury.Guide.Toggle() end
+end
+
+local function ToggleChangelog()
+  if ApexFury.WhatsNew then ApexFury.WhatsNew.Toggle() end
+end
+
 local function ToggleOverlay()
   if ApexFury.Overlay and ApexFury.Overlay.Toggle then
     ApexFury.Overlay.Toggle()
@@ -184,35 +196,25 @@ CobySuite_ApexFury.Slash.Register({
   message  = Message,
   onEmpty  = ToggleSettings,   -- bare /af opens the settings window (most common entry point)
   footer   = { "|cFF808080(All other settings live in the GUI, open with /af)|r" },
-  commands = {
-    { name = "settings", aliases = { "options", "config" },
-      help = "Open the settings window (bare /af does the same)", run = ToggleSettings },
-    { name = "status", help = "Print the current settings and the talent check to chat", run = PrintStatus },
-    { name = "scan", usage = "scan [name]", help = "List active player buffs (find spell IDs)", run = ScanBuffs },
-    { name = "overlay", aliases = { "show" }, help = "Open or close the on-screen status overlay", run = ToggleOverlay },
-    { name = "debug", help = "Open or close the debug log window", run = ToggleDebugWindow },
-    { name = "channel", usage = "channel [dialog|master|sfx]", help = "Show or change the audio channel", run = SetChannel },
-    { name = "reset", help = "Restore all settings to defaults", run = function()
-      ApexFury.Config.Reset()
-      Message("All settings restored to defaults.")
-    end },
+  commands = CobySuite_ApexFury.Slash.StandardCommands({
+    settings  = ToggleSettings,
+    guide     = ToggleGuide,
+    changelog = ToggleChangelog,
+    debug     = ToggleDebugWindow,
     -- Development only: the suites are stripped from release builds, and
-    -- available() hides the command from help there
-    { name = "test", usage = "test [suite]", help = "Open the in-game test window, optionally running one suite",
-      available = function() return ApexFury.Tests ~= nil end,
-      run = function(rest)
-        local tests = ApexFury.Tests
-        if not tests then
-          Message("Tests are not loaded.")
-          return
-        end
-        tests.Window:Show()
-        local suite = rest and rest:match("^%s*(%S+)")
-        if suite then
-          tests.RunSuite(suite)
-        end
+    -- test is then left out of the help
+    tests     = function() return ApexFury.Tests end,
+    extra = {
+      { name = "status", help = "Print the current settings and the talent check to chat", run = PrintStatus },
+      { name = "scan", usage = "scan [name]", help = "List active player buffs (find spell IDs)", run = ScanBuffs },
+      { name = "overlay", aliases = { "show" }, help = "Open or close the on-screen status overlay", run = ToggleOverlay },
+      { name = "channel", usage = "channel [dialog|master|sfx]", help = "Show or change the audio channel", run = SetChannel },
+      { name = "reset", help = "Restore all settings to defaults", run = function()
+        ApexFury.Config.Reset()
+        Message("All settings restored to defaults.")
       end },
-  },
+    },
+  }),
 })
 
 -------------------------------------------------------------------------------
@@ -230,6 +232,9 @@ startupFrame:SetScript("OnEvent", function(_, event, arg1)
     ApexFury.Debug.Log("INIT", "ApexFury v%s loaded", VERSION)
 
   elseif event == "PLAYER_LOGIN" then
+    -- A fresh install opens the guide; an update, the changelog. First, so
+    -- it reads the saved state before the channel hint below marks it
+    if ApexFury.WhatsNew then ApexFury.WhatsNew.OnLogin() end
     if ApexFury.Watcher.Start then
       ApexFury.Watcher.Start()
     end

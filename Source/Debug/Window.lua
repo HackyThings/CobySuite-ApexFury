@@ -7,5 +7,6 @@
 ApexFury.DebugWindow = CobySuite_ApexFury.Debug.NewWindow({
   windowName = "ApexFuryDebugWindow",
   title = "ApexFury Debug Log",
+  icon = ApexFury.ICON,
   logger = ApexFury.Debug,
 })

@@ -5,8 +5,9 @@
 -- with its own filters, state, and customizations. The core UI layout, filter
 -- system, copy box, auto-scroll, and live log display are all shared.
 --
--- Consumer addons can add tabs, extra toolbar buttons, and custom methods
--- (e.g., ResetAllData, WipeAllData) after construction.
+-- Consumer addons pass tabs and extra toolbar buttons in opts (tabs,
+-- extraToolbarButtons) and can add custom methods (e.g., ResetAllData,
+-- WipeAllData) after construction.
 -------------------------------------------------------------------------------
 
 local LEVEL_COLORS = {
@@ -438,7 +439,7 @@ end
 --                                     non-log tabs get content frames created automatically
 --                                     contentKey stores the content frame as frame[contentKey]
 --   extraToolbarButtons    (table?)   array of {key?, text, width?, textColor?, side, onClick}
---                                     side = "left" (after Clear) or "right" (before AutoScroll)
+--                                     side = "left" (after Clear) or "right" (at the right edge, right of Auto-scroll, in array order)
 --                                     onClick receives the window frame
 --   diagActiveColor        (table|fn?) {R, G, B} array or function returning same, default {0,1,0}
 --   categoryMenuBackdrop   (table|fn?) backdrop table or function returning one
@@ -603,7 +604,7 @@ function CobySuite_ApexFury.Debug.NewWindow(opts)
     rightAnchor = btn
   end
 
-  -- Auto-scroll: anchor left of rightmost right button, or at right edge
+  -- Auto-scroll: left of the leftmost right-side button, or at the right edge
   f.AutoScrollToggle = CreateFrame("CheckButton", nil, f.ActionToolbar, "UICheckButtonTemplate")
   f.AutoScrollToggle:SetSize(24, 24)
   if rightAnchor then

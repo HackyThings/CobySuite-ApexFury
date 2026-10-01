@@ -19,7 +19,7 @@
 -- second argument and go through the same gate and prefix.
 --
 -- The messenger is a callable table (a metatable __call), not a function:
--- call it, pass it as a callback or to Slash.Register as before, but do not
+-- call it, pass it as a callback or to Slash.Register, but do not
 -- test it with type(x) == "function".
 ---------------------------------------------------------------------------
 CobySuite_ApexFury.Chat = CobySuite_ApexFury.Chat or {}

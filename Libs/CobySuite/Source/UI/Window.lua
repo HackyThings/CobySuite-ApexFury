@@ -10,15 +10,20 @@
 --   local f = CobySuite.UI.CreateWindow({
 --     name          = "MyAddonOptionsWindow",  -- global name; needed for escapeCloses
 --     title         = "My Addon Settings",     -- TitleText
---     icon          = "Interface\Icons\INV_Misc_Book_09",  -- optional, 16px left of the title
+--     parent        = UIParent,                -- default UIParent
+--     template      = "BasicFrameTemplateWithInset",  -- default BasicFrameTemplateWithInset
+--     icon          = "Interface\\Icons\\INV_Misc_Book_09",  -- optional, 16px left of the title
 --     width = 400, height = 190,
 --     strata        = "MEDIUM",                -- default MEDIUM: the layer of Blizzard's own
 --                                              -- panels, so a click brings either forward;
 --                                              -- only a dialog that asks something passes
 --                                              -- "DIALOG" (Cobanyte, 2026-09-28)
+--     toplevel      = true,                    -- default true
+--     clampToScreen = true,                    -- default true
 --     movable       = true,                    -- default true
 --     resizable     = { minWidth = 600, minHeight = 400, maxWidth = 1200, maxHeight = 800 },  -- optional
 --     solidBackground = true,                  -- default true (U.Colors.WINDOW_BG)
+--     backgroundColor = { r, g, b, a },        -- default U.Colors.WINDOW_BG
 --     escapeCloses  = true,                    -- UISpecialFrames insert; default false
 --     closeButtonInCombat = true,              -- close button calls Hide(); default true
 --     persist = {                              -- optional saved position / size
@@ -31,12 +36,18 @@
 --     mixin = MyWindowMixin,                   -- optional, applied before anything else
 --     onDragStop = function(f) end,            -- optional, after the state is saved
 --     onResizeStop = function(f) end,          -- optional, likewise after a resize
+--     shown = false,                           -- default false: the window starts hidden
 --   })
 --   Moving and sizing start on the left button and also end (state saved,
 --   callback run) when the window hides mid-drag. A resizable window is
 --   brought inside its bounds each time it shows and after RestoreState: a
 --   size saved before the bounds grew (by persist, or by the client's own
 --   layout cache for a named window the player moved) never hides content.
+--   Neither can the screen: a window never fits wider or taller than the
+--   screen, and a drag of its corner stops at the screen's edges. A window
+--   clamped to the screen and sized past an edge is pushed back by the
+--   client while the drag keeps growing it, so it ran away to its largest
+--   size with its grip off the screen (the curator console, 2026-09-30).
 --   f:SaveState()      f:RestoreState()      f:FitToBounds()      f:Toggle()
 --
 -- Escape: UISpecialFrames is the standard path (CloseSpecialWindows calls
@@ -76,13 +87,31 @@ function WindowMixin:RestoreState()
   self:FitToBounds()
 end
 
--- Brings the size inside the resize bounds (a resizable window only)
+-- ScreenSize(f): the screen's width and height in f's own units, or nil
+-- when they can't be read
+local function ScreenSize(f)
+  local ok, w, h, parentScale, ownScale = pcall(function()
+    return UIParent:GetWidth(), UIParent:GetHeight(), UIParent:GetEffectiveScale(), f:GetEffectiveScale()
+  end)
+  if not ok or type(w) ~= "number" or type(h) ~= "number" or type(parentScale) ~= "number"
+    or type(ownScale) ~= "number" or ownScale <= 0 or w <= 0 or h <= 0 then
+    return nil
+  end
+  return w * parentScale / ownScale, h * parentScale / ownScale
+end
+
+-- Brings the size inside the resize bounds and the screen (a resizable
+-- window only)
 function WindowMixin:FitToBounds()
   local b = self._bounds
   if not b then return end
   local w, h = self:GetSize()
   local fitW = math.min(math.max(w, b.minWidth), b.maxWidth)
   local fitH = math.min(math.max(h, b.minHeight), b.maxHeight)
+  local screenW, screenH = ScreenSize(self)
+  if screenW then
+    fitW, fitH = math.min(fitW, screenW), math.min(fitH, screenH)
+  end
   if fitW ~= w or fitH ~= h then
     self:SetSize(fitW, fitH)
   end
@@ -168,6 +197,9 @@ function UI.CreateWindow(opts)
     if not self._sizing then return end
     self._sizing = false
     self:StopMovingOrSizing()
+    -- the drag's screen-edge limits end with it
+    local b = self._bounds
+    if b then self:SetResizeBounds(b.minWidth, b.minHeight, b.maxWidth, b.maxHeight) end
     self:SaveState()
     if opts.onResizeStop then opts.onResizeStop(self) end
   end
@@ -201,6 +233,14 @@ function UI.CreateWindow(opts)
       if left and top then
         f:ClearAllPoints()
         f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+        -- the corner stops at the screen's right and bottom edges: past them
+        -- the clamp pushes the window back and the drag runs away
+        local screenW = ScreenSize(f)
+        if screenW then
+          local b = f._bounds
+          f:SetResizeBounds(b.minWidth, b.minHeight, math.max(b.minWidth, math.min(b.maxWidth, screenW - left)),
+            math.max(b.minHeight, math.min(b.maxHeight, top)))
+        end
       end
       f._sizing = true
       f:StartSizing("BOTTOMRIGHT")
@@ -244,7 +284,8 @@ end
 -- (CreateSettingsWindow). This registers a small canvas page in Blizzard's
 -- Options > AddOns list so the addon is found where players look first:
 -- the name in the brand colour, the version, a description and a button
--- that closes the options panel and opens the addon's window. Returns the
+-- that hides the options panel (left open while it holds unapplied changes)
+-- and opens the addon's window. Returns the
 -- Settings category (category:GetID() for Settings.OpenToCategory) and
 -- the canvas frame, which is also kept in UI.SettingsPages[name] with its
 -- button as canvas.OpenButton, for the taint suites.

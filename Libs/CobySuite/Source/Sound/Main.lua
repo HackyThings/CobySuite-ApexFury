@@ -41,18 +41,12 @@ CobySuite_ApexFury.Sound = CobySuite_ApexFury.Sound or {}
 local Sound = CobySuite_ApexFury.Sound
 
 ---------------------------------------------------------------------------
--- Source colors, used by browsers/UI to color-code source pills. Hex
--- color codes (no |c prefix). Consumers that need decimal values can
--- divide by 255.
+-- Source colors, used by the sound browser to color-code source pills,
+-- keyed by an entry's source (an LSM entry by its pack). Hex color codes
+-- (no |c prefix). Consumers that need decimal values can divide by 255.
 ---------------------------------------------------------------------------
 Sound.SourceColors = {
   Blizzard          = "FFD200",
-  ["Blizzard: UI"]      = "FFE07A",
-  ["Blizzard: Voice"]   = "9FC2E0",
-  ["Blizzard: Combat"]  = "F09898",
-  ["Blizzard: Item"]    = "8AE07A",
-  ["Blizzard: Alert"]   = "FFAA40",
-  ["Blizzard: Effect"]  = "FFD200",
   LibSharedMedia    = "8AD4FF",
   Astral            = "A335EE",   -- matches Astral's own |c prefix
   Causese           = "FF7777",
@@ -101,7 +95,8 @@ local function ClassifyBlizzardName(name)
 
   -- Voice (most specific). SOUNDKIT genuinely has very little voice
   -- content: boss/NPC speech is FileDataID-based, outside SOUNDKIT.
-  -- Anchored prefixes only to avoid false positives.
+  -- VO_, VOX_ and NPC_ are anchored prefixes to avoid false positives;
+  -- VOICEOVER, _SPEECH and _DIALOGUE match anywhere.
   if name:find("VOICEOVER", 1, true)
      or name:sub(1, 3) == "VO_"
      or name:sub(1, 4) == "VOX_"
@@ -112,9 +107,8 @@ local function ClassifyBlizzardName(name)
     return "Voice"
   end
 
-  -- Item / economy: check BEFORE UI so things like LOOT_OPEN, BAG_CLOSE,
-  -- AUCTION_WINDOW_OPEN go to Item rather than getting swallowed by UI's
-  -- generic _OPEN/_CLOSE patterns.
+  -- Item / economy: checked before UI so an item sound that also carries a
+  -- UI marker (an IG_ or UI_ prefix, _CLICK, _POPUP) goes to Item.
   if name:find("AUCTION", 1, true)
      or name:find("ITEM_", 1, true)
      or name:find("_ITEM", 1, true)
@@ -149,7 +143,7 @@ local function ClassifyBlizzardName(name)
     return "Combat"
   end
 
-  -- System alerts: also before UI so READY_CHECK_*_OPEN doesn't end up UI
+  -- System alerts: also before UI, so an alert name with an IG_ or UI_ prefix goes to Alert
   if name:find("ALARM", 1, true)
      or name:find("READY_CHECK", 1, true)
      or name:find("RAID_", 1, true)
@@ -244,12 +238,6 @@ end
 local function GetLSM()
   if not LibStub then return nil end
   return LibStub("LibSharedMedia-3.0", true)
-end
-
--- Strip WoW color codes (CobySuite.Utilities.StripColors, kept under this
--- name for its callers)
-function Sound.StripColors(s)
-  return CobySuite_ApexFury.Utilities.StripColors(s)
 end
 
 local function PrettifyName(name)
@@ -600,9 +588,9 @@ local function GetBlizzardLabelByValue()
   return blizzardLabelByValue
 end
 
--- The catalog label, else a SOUNDKIT name, else savedLabel (the label a
--- consumer kept for a value outside the catalog, such as "fdid:N"), else
--- Resolve's description
+-- The Blizzard catalog label, else a SOUNDKIT name, else savedLabel (the
+-- label a consumer kept for a value outside that catalog, such as
+-- "fdid:N"), else Resolve's description (an LSM value's name)
 function Sound.LookupLabel(value, savedLabel)
   local label = GetBlizzardLabelByValue()[value]
   if label then return label end

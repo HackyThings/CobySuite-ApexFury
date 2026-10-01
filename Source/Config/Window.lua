@@ -3,7 +3,10 @@
 --
 -- The suite's standard settings window (CobySuite.UI.CreateSettingsWindow):
 -- a sidebar with Behavior, Trigger and Sound, staged edits that Apply writes
--- through Config.Set, Cancel, and Defaults. The Sound category holds the
+-- through Config.Set, Cancel, and Defaults, and a Guide button first in the
+-- footer (then Debug Log and Overlay). The addon is also listed under
+-- Options > AddOns with a button that opens this window
+-- (CobySuite.UI.RegisterSettingsCategory). The Sound category holds the
 -- selected-sound display with its test button, the optional Leatrix Sounds
 -- row, the audio channel and the library tip over an embedded
 -- CobySuite.UI.SoundBrowser; a pick in the browser stages the sound like any
@@ -228,7 +231,7 @@ local function BuildSound(panel, win)
       replacePopup.pickValue, replacePopup.pickEntry = value, entry
       replacePopup:SetBody(string.format(
         "You're currently using a Leatrix Sounds selection.\n\nReplace it with: |cFFFFD200%s|r?",
-        CSound.StripColors(entry and entry.label or "")))
+        U.StripColors(entry and entry.label or "")))
       replacePopup:Show()
       return
     end
@@ -388,12 +391,18 @@ local function BuildWindow()
   window = UI.CreateSettingsWindow({
     name    = "ApexFuryOptionsWindow",
     title   = ApexFury.WrapBrand("ApexFury") .. " - Settings",
+    icon    = ApexFury.ICON,
     config  = Config,
     width   = WINDOW_W,
     height  = WINDOW_H,
     persist = { svTable = GetUIState, key = "options" },
     message = ApexFury.Message,
     footerButtons = {
+      {
+        text = "Guide", width = 80,
+        tooltip = "Open the feature guide: what the alert does and how to set it up.",
+        onClick = function() if ApexFury.Guide then ApexFury.Guide.Toggle() end end,
+      },
       {
         text = "Debug Log", width = 120,
         onClick = function()
@@ -425,15 +434,39 @@ function Config.NotifySettingsWindow(key)
   if window then window:NotifyConfigChanged(key) end
 end
 
-function Config.ToggleSettings()
-  if not window then
-    if InCombatLockdown() then
-      -- Root rule: no CreateFrame in combat. The window is built on the
-      -- first open, so refuse that open; nothing reopens it later.
-      ApexFury.Message("The settings window can't open for the first time in combat. Try again after combat.")
-      return
-    end
-    BuildWindow()
+-- The window, built on the first open; nil when that first open comes in
+-- combat. Root rule: no CreateFrame in combat, so that open is refused with
+-- a chat line and nothing reopens it later.
+local function EnsureWindow()
+  if window then return window end
+  if InCombatLockdown() then
+    ApexFury.Message("The settings window can't open for the first time in combat. Try again after combat.")
+    return nil
   end
-  window:Toggle()
+  return BuildWindow()
 end
+
+function Config.ToggleSettings()
+  if EnsureWindow() then window:Toggle() end
+end
+
+function Config.OpenSettings()
+  if EnsureWindow() then window:Open() end
+end
+
+-------------------------------------------------------------------------------
+-- Options > AddOns entry (registered once this addon has finished loading)
+-------------------------------------------------------------------------------
+EventUtil.ContinueOnAddOnLoaded("ApexFury", function()
+  UI.RegisterSettingsCategory({
+    name        = "ApexFury",
+    brandColor  = ApexFury.BRAND_COLOR,
+    version     = ApexFury.VERSION,
+    description = {
+      "Plays a sound the moment a Devastation Evoker's Rising Fury reaches 4 stacks, timed from Dragonrage and your empowers.",
+      "The settings live in the addon's own settings window.",
+    },
+    slash       = "/af settings",
+    onOpen      = Config.OpenSettings,
+  })
+end)

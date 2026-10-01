@@ -152,3 +152,61 @@ function Slash.Register(opts)
   SlashCmdList[opts.key] = Handle
   return Handle
 end
+
+-------------------------------------------------------------------------------
+-- StandardCommands(opts): the commands every suite addon has, with the same
+-- names, aliases and help in each (Cobanyte, 2026-09-30: "the same command
+-- system from core"; Recollect's set). Pass the result as Register's
+-- commands. Each handler is a function called per use, so it may name a
+-- module that loads after Core.lua. An entry whose handler is nil is left
+-- out, so an addon without a main window passes no show.
+--
+--   opts.show       open or close the main window (also pass it as onEmpty)
+--   opts.showHelp   show's help text ("Open or close the main window")
+--   opts.settings   open or close the settings window
+--   opts.guide      open or close the feature guide
+--   opts.changelog  open or close the What's New changelog
+--   opts.debug      open or close the debug log window
+--   opts.tests      function returning the addon's test runner, nil in a
+--                   release build: "test [suite]" exists only while it
+--                   returns one
+--   opts.extra      the addon's own commands, placed before test
+-------------------------------------------------------------------------------
+function Slash.StandardCommands(opts)
+  local list = {}
+  local function Add(def) list[#list + 1] = def end
+  if opts.show then
+    Add({ name = "show", help = opts.showHelp or "Open or close the main window", run = function() opts.show() end })
+  end
+  if opts.settings then
+    Add({ name = "settings", aliases = { "config", "options" }, help = "Open the settings window",
+          run = function() opts.settings() end })
+  end
+  if opts.guide then
+    Add({ name = "guide", aliases = { "tutorial" }, help = "Open or close the feature guide",
+          run = function() opts.guide() end })
+  end
+  if opts.changelog then
+    Add({ name = "changelog", aliases = { "change", "whatsnew", "news" },
+          help = "Open or close the changelog: what changed in each version",
+          run = function() opts.changelog() end })
+  end
+  if opts.debug then
+    Add({ name = "debug", help = "Open or close the debug log window", run = function() opts.debug() end })
+  end
+  for _, def in ipairs(opts.extra or {}) do Add(def) end
+  if opts.tests then
+    Add({
+      name = "test", usage = "test [suite]", help = "Open the in-game test window, optionally running one suite",
+      available = function() return opts.tests() ~= nil end,
+      run = function(rest)
+        local tests = opts.tests()
+        if not tests then return end
+        tests.Window:Show()
+        local suite = rest and rest:match("^%s*(%S+)")
+        if suite then tests.RunSuite(suite) end
+      end,
+    })
+  end
+  return list
+end

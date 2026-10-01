@@ -270,8 +270,7 @@ function SoundBrowser.Create(parent, opts)
   local Refresh
   local scrollBox, dataProvider
 
-  -- TableHeader expects utilities.AddTooltip; CobySuite splits it across
-  -- Utilities (constants) and UI (AddTooltip), so merge for the mixin.
+  -- TableHeader falls back to CobySuite.UI.AddTooltip when utilities has none, so this merge is optional
   local utilsForHeader = setmetatable(
     { AddTooltip = CobySuite_ApexFury.UI.AddTooltip },
     { __index = U }
@@ -337,7 +336,7 @@ function SoundBrowser.Create(parent, opts)
     row:SetScript("OnEnter", function(self)
       if not self._entry then return end
       GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-      GameTooltip:SetText(Sound.StripColors(self._entry.label or ""), 1, 1, 1)
+      GameTooltip:SetText(U.StripColors(self._entry.label or ""), 1, 1, 1)
       local color = PillColorForEntry(self._entry)
       GameTooltip:AddLine("Source: |cFF" .. color .. SourceDisplayName(self._entry) .. "|r", 1, 1, 1)
       GameTooltip:AddLine("Type: |cFF888888" .. (self._entry.kind or "") .. "|r", 1, 1, 1)

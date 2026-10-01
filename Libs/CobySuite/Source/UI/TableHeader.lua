@@ -24,7 +24,7 @@ local function ClampWidth(width, room)
   return math.max(width, MIN_COL_WIDTH)
 end
 
--- Defaults when no utilities table is provided
+-- Fallbacks when no utilities table, or not that field, is provided
 local DEFAULT_HEADER_BG    = {0.1, 0.1, 0.1, 0.5}
 local DEFAULT_DIVIDER      = {0.3, 0.3, 0.3, 0.8}
 local DEFAULT_RESIZE_HL    = {0.5, 0.5, 1.0, 0.5}
@@ -80,8 +80,9 @@ local Mixin = CobySuite_ApexFury.UI.TableHeaderMixin
 --                              touches a divider, the layout on screen is
 --                              the one kept.
 --
--- Every width, dragged, auto-fitted or restored, is at least MIN_COL_WIDTH;
--- a saved width that is not a usable number falls back to the default.
+-- Every width dragged or auto-fitted is at least MIN_COL_WIDTH; a declared
+-- width is used as given. A saved width that is not a finite number of at
+-- least MIN_COL_WIDTH keeps the declared width.
 -------------------------------------------------------------------------------
 function Mixin:Init(opts)
   -- Init again on the same header (a table that switches its column set):
@@ -418,7 +419,7 @@ function Mixin:_HandleSortClick(colIndex)
     end
   end
 
-  -- Toggle direction
+  -- The same column flips direction; a new column starts ascending
   local btn = self._headerButtons[colIndex]
   if self._sortKey == col.key then
     self._sortDir = self._sortDir == SortDir.ASC and SortDir.DESC or SortDir.ASC

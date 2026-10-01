@@ -30,8 +30,9 @@ end
 ---------------------------------------------------------------------------
 local base = CobySuite_ApexFury.Config.New({
   savedVariable = "APEX_FURY_CONFIG",
-  -- High-traffic UI-driven keys: exclude from CONFIG.Set logging so
-  -- browsing the 1000-entry sound picker doesn't flood the debug log.
+  -- Kept out of the CONFIG.Set log line. They were quiet when every pick
+  -- in the sound browser wrote them; a pick now only stages in the
+  -- settings window, and Apply writes them once.
   quietKeys = QUIET_KEYS,
   options = {
     SPELL_ID         = "spell_id",         -- TRIGGER cast spell (not the stacking aura)

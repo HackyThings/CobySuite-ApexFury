@@ -1,6 +1,6 @@
 ## Interface: 120100
 ## Title: ApexFury
-## Version: 1.0.4
+## Version: 1.0.5
 ## Author: Cobanyte
 ## OptionalDeps: LibSharedMedia-3.0
 ## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.1). Timed from your Dragonrage and empower casts; never reads private auras.
@@ -18,6 +18,7 @@ Libs\CobySuite\Source\UI\Factories.lua
 Libs\CobySuite\Source\UI\Window.lua
 Libs\CobySuite\Source\UI\SettingsWindow.lua
 Libs\CobySuite\Source\UI\TableHeader.lua
+Libs\CobySuite\Source\UI\Guide.lua
 Libs\CobySuite\Source\Debug\Logger.lua
 Libs\CobySuite\Source\Debug\Window.lua
 Libs\CobySuite\Source\Sound\Main.lua
@@ -32,6 +33,9 @@ Source\Debug\Window.lua
 
 # Sound
 Source\Sound\Main.lua
+
+# Data
+Source\Data\Changelog.lua
 
 # Config
 Source\Config\Main.lua
@@ -48,3 +52,7 @@ Source\Overlay\Main.lua
 
 # Integration
 Source\Integration\Leatrix.lua
+
+# UI
+Source\UI\Guide.lua
+Source\UI\WhatsNew.lua

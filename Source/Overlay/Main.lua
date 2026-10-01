@@ -22,7 +22,7 @@ local U = CobySuite_ApexFury.Utilities
 local UI = CobySuite_ApexFury.UI
 
 local LINE_TOOLTIPS = {
-  [1] = "Tracking state. Counts down to alert fire while DR is active. PENDING = timer fired out of combat and is waiting for combat re-entry. HOLD = at the alert moment Dragonrage looked too short, so the alert waits half a second for an empower that arrives late. fired/suppressed/idle resolve once the cycle completes.",
+  [1] = "Tracking state. Counts down to alert fire while DR is active. PENDING = the alert moment came while you couldn't act on it (out of combat, in a vehicle, mounted, possessed, or stunned or otherwise crowd-controlled); the line names which. When that clears, the alert is checked again and plays only if its other conditions still pass. EXPIRED = a pending alert whose Rising Fury ran out first. HOLD = at the alert moment Dragonrage looked too short, so the alert waits half a second for an empower that arrives late. fired/suppressed/idle resolve once the cycle completes.",
   [2] = "Time remaining for Dragonrage (or the Rising Fury linger after DR drops). (read) = Dragonrage's own timer, read once out of combat just after the cast and after each empower. Otherwise, and always in combat: estimated via the predictive model from cast time + Animosity empower extensions.",
   [3] = "Empower spells (Fire Breath / Eternity Surge) cast since this Dragonrage, the Rising Fury stacks reached so far, and in brackets the stacks projected for the moment DR drops (it grows as empowers extend DR). Each empower extends DR via Animosity (+5s, 25% diminishing per cast).",
   [4] = "Exact elapsed seconds from the Dragonrage cast to when the alert sound played (or was suppressed). Frozen at the moment of resolution.",
@@ -206,8 +206,11 @@ local function UpdateDisplay()
     lines[5]:SetText("|cFFCCCCCCLast alert:|r |cFF888888--|r")
   end
 
-  -- Line 6: live verdict: what FireAlert would do if it ran right now.
-  -- Mirrors FireAlert's gate logic without actually firing.
+  -- Line 6: live verdict, a preview of FireAlert's gates in its order
+  -- (duration, linger alive, min_remaining) without firing. A too-short
+  -- duration waits while an empower can still extend the cycle (up to the
+  -- predicted end plus the grace, unless Animosity is known missing), as
+  -- FireAlert's hold does; after that it is a trigger_too_short suppress.
   if not state.castTime then
     lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF888888idle|r")
   elseif state.alertFired then
@@ -235,18 +238,25 @@ local function UpdateDisplay()
     local threshold   = Config.Get(Config.Options.THRESHOLD)
     local minRem      = Config.Get(Config.Options.MIN_REMAINING) or 0
     local requiredDur = (threshold - 1) * interval + ApexFury.Watcher.THRESHOLD_BUFFER
+    local predictedEnd = state.expectedTriggerEnd or (state.castTime + ApexFury.Watcher.DR_BASE_DURATION)
     local actualDur   = state.triggerDropTime
                       and (state.triggerDropTime - state.castTime)
-                       or ((state.expectedTriggerEnd or (state.castTime + ApexFury.Watcher.DR_BASE_DURATION)) - state.castTime)
+                       or (predictedEnd - state.castTime)
     local rem         = state.estLingerRemaining or math.huge
     local rfAlive     = (not state.triggerDropTime) or (rem > 0)
+    local canExtend   = state.gateAnimosity ~= false
+                        and now <= predictedEnd + ApexFury.Watcher.EMPOWER_LATENCY_GRACE
 
-    if not rfAlive then
-      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger expired|r")
-    elseif actualDur < requiredDur then
+    if actualDur < requiredDur and canExtend then
       lines[6]:SetText(string.format(
         "|cFFCCCCCCVerdict:|r |cFFFFAA00wait: DR %.1fs / %.1fs needed|r",
         actualDur, requiredDur))
+    elseif actualDur < requiredDur then
+      lines[6]:SetText(string.format(
+        "|cFFCCCCCCVerdict:|r |cFFFF8800suppress: DR %.1fs < %.1fs needed|r",
+        actualDur, requiredDur))
+    elseif not rfAlive then
+      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger expired|r")
     elseif rem ~= math.huge and rem < minRem then
       lines[6]:SetText(string.format(
         "|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger %.1fs < %.1fs|r",
@@ -263,18 +273,19 @@ local function UpdateDisplay()
 end
 
 ---------------------------------------------------------------------------
--- Persist position to SavedVariable
+-- The overlay's saved state, APEX_FURY_UI_STATE.overlay: its place (the
+-- shell's persist writes point, relativePoint, x, y and the size into it
+-- and leaves other keys alone) and the `shown` flag
 ---------------------------------------------------------------------------
-local function SavePosition()
-  if not frame then return end
-  local point, _, relPoint, x, y = frame:GetPoint(1)
-  if not point then return end
+local function GetUIState()
   APEX_FURY_UI_STATE = APEX_FURY_UI_STATE or {}
-  APEX_FURY_UI_STATE.overlay = APEX_FURY_UI_STATE.overlay or {}
-  APEX_FURY_UI_STATE.overlay.point = point
-  APEX_FURY_UI_STATE.overlay.relativePoint = relPoint
-  APEX_FURY_UI_STATE.overlay.x = x
-  APEX_FURY_UI_STATE.overlay.y = y
+  return APEX_FURY_UI_STATE
+end
+
+local function GetOverlayState()
+  local state = GetUIState()
+  if type(state.overlay) ~= "table" then state.overlay = {} end
+  return state.overlay
 end
 
 ---------------------------------------------------------------------------
@@ -284,11 +295,10 @@ end
 local function BuildFrame()
   if frame then return frame end
 
-  -- Shared window shell (solid background, drag to move). Position is
-  -- persisted by SavePosition rather than the shell's persist option:
-  -- APEX_FURY_UI_STATE.overlay also carries the `shown` flag, which the
-  -- shared SaveWindowState would overwrite. Overlay.Show anchors the frame
-  -- from that table before showing it.
+  -- Shared window shell (solid background, drag to move). The shell's
+  -- persist saves the place on drag stop, and Overlay.Show restores it,
+  -- checked field by field, before showing. A fixed size: the line count
+  -- sets the height, never a saved one.
   local f = UI.CreateWindow({
     name       = "ApexFuryOverlay",
     title      = ApexFury.WrapBrand("ApexFury"),
@@ -297,7 +307,12 @@ local function BuildFrame()
     strata     = "MEDIUM",
     toplevel   = false,
     closeButtonInCombat = false,
-    onDragStop = SavePosition,
+    persist    = {
+      svTable   = GetUIState,
+      key       = "overlay",
+      defaults  = { point = "CENTER", relPoint = "CENTER", x = 200, y = 0 },
+      fixedSize = true,
+    },
   })
 
   -- BasicFrameTemplate exposes its close button as f.CloseButton; route it
@@ -336,26 +351,15 @@ end
 -- Public API
 ---------------------------------------------------------------------------
 function Overlay.Show()
-  -- Restore saved position (or center on first show)
-  local s = APEX_FURY_UI_STATE and APEX_FURY_UI_STATE.overlay
-  frame:ClearAllPoints()
-  if s and s.point then
-    frame:SetPoint(s.point, UIParent, s.relativePoint or s.point, s.x or 0, s.y or 0)
-  else
-    frame:SetPoint("CENTER", UIParent, "CENTER", 200, 0)
-  end
-
+  -- The saved place (right of center on the first show)
+  frame:RestoreState()
   frame:Show()
-  APEX_FURY_UI_STATE = APEX_FURY_UI_STATE or {}
-  APEX_FURY_UI_STATE.overlay = APEX_FURY_UI_STATE.overlay or {}
-  APEX_FURY_UI_STATE.overlay.shown = true
+  GetOverlayState().shown = true
 end
 
 function Overlay.Hide()
   if frame then frame:Hide() end
-  APEX_FURY_UI_STATE = APEX_FURY_UI_STATE or {}
-  APEX_FURY_UI_STATE.overlay = APEX_FURY_UI_STATE.overlay or {}
-  APEX_FURY_UI_STATE.overlay.shown = false
+  GetOverlayState().shown = false
 end
 
 function Overlay.Toggle()
@@ -367,9 +371,7 @@ function Overlay.Toggle()
 end
 
 function Overlay.RestoreFromSavedVar()
-  if APEX_FURY_UI_STATE
-     and APEX_FURY_UI_STATE.overlay
-     and APEX_FURY_UI_STATE.overlay.shown then
+  if GetOverlayState().shown == true then
     Overlay.Show()
   end
 end

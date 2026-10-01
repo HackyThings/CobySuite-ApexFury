@@ -29,6 +29,19 @@ function U.IsFiniteNumber(value)
   return type(value) == "number" and not string.find(tostring(value), "[^%d%.eE%+%-]")
 end
 
+-- IsSecret(value): a 12.x secret value, which addon code may hold in a
+-- variable or a table value but not compare, do arithmetic on or use as a
+-- table key. IsSecretTable(value): a table that is itself secret
+-- (a 12.1 aura payload or AuraData). Both are false on a client without
+-- the check, and for nil.
+function U.IsSecret(value)
+  return issecretvalue ~= nil and issecretvalue(value) and true or false
+end
+
+function U.IsSecretTable(value)
+  return issecrettable ~= nil and type(value) == "table" and issecrettable(value) and true or false
+end
+
 ---------------------------------------------------------------------------
 -- Fonts
 ---------------------------------------------------------------------------
@@ -153,6 +166,17 @@ U.Backdrops = {
 ---------------------------------------------------------------------------
 -- Color helper
 ---------------------------------------------------------------------------
+-- HexToRGB(hex): r, g, b (0 to 1) from "RRGGBB" (the first six
+-- characters are read); nil for anything else
+function U.HexToRGB(hex)
+  if type(hex) ~= "string" or #hex < 6 then return nil end
+  local r = tonumber(hex:sub(1, 2), 16)
+  local g = tonumber(hex:sub(3, 4), 16)
+  local b = tonumber(hex:sub(5, 6), 16)
+  if not (r and g and b) then return nil end
+  return r / 255, g / 255, b / 255
+end
+
 -- ColorToHex(color): "RRGGBB" for a hex string (as it is), an {r, g, b}
 -- or { r =, g =, b = } table of 0 to 1 values (rounded), or a ColorMixin;
 -- white for anything else
@@ -270,13 +294,6 @@ function U.SortByColumn(data, columnKey, ascending)
   end)
 end
 
-function U.SortByQualityThenName(a, b)
-  if a.quality ~= b.quality then
-    return a.quality > b.quality
-  end
-  return a.name < b.name
-end
-
 function U.NumberComparator(sortDir, field)
   if sortDir == 1 then
     return function(left, right) return (left[field] or 0) < (right[field] or 0) end
@@ -298,11 +315,6 @@ end
 ---------------------------------------------------------------------------
 local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:0|t"
 local SILVER_ICON = "|TInterface\\MoneyFrame\\UI-SilverIcon:0|t"
-
-function U.FormatGoldValue(copper)
-  if not copper or copper <= 0 then return "" end
-  return math.floor(copper / 10000)
-end
 
 function U.FormatGoldPrecise(copper)
   if not copper or copper == 0 then return "0.00" .. GOLD_ICON end
@@ -364,7 +376,7 @@ function U.FormatKB(kb)
 end
 
 ---------------------------------------------------------------------------
--- FormatDuration: format seconds as "Xh Ym Zs", omitting zero parts
+-- FormatDuration: format seconds as "Xh Ym Zs", leaving out leading zero units ("5m 0s", "1h 0m 5s")
 ---------------------------------------------------------------------------
 function U.FormatDuration(seconds)
   seconds = math.floor(seconds)
@@ -481,6 +493,48 @@ function U.Throttle(interval, fn)
 end
 
 ---------------------------------------------------------------------------
+-- RunOutOfCombat(fn, key): runs fn now when the player is out of combat
+-- (returns true); in combat, runs it once combat ends (returns false), so
+-- a frame is never built during lockdown. Calls with the same key while in
+-- combat keep one entry, the latest fn, in the place of the first; without
+-- a key, fn itself is the key. Entries run in the order they were first
+-- queued, each through the error handler, so one failure never stops the
+-- rest. A key is anything the caller owns (a table, its function).
+---------------------------------------------------------------------------
+local combatQueue, combatQueued = {}, {}
+
+local function RunCombatQueue()
+  if #combatQueue == 0 then return end
+  local queue = combatQueue
+  combatQueue, combatQueued = {}, {}
+  for _, entry in ipairs(queue) do
+    xpcall(entry.fn, geterrorhandler())
+  end
+end
+
+-- Built at load, so no frame is ever made during lockdown
+local combatFrame = CreateFrame("Frame")
+combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatFrame:SetScript("OnEvent", RunCombatQueue)
+
+function U.RunOutOfCombat(fn, key)
+  if not InCombatLockdown() then
+    fn()
+    return true
+  end
+  key = key == nil and fn or key
+  local entry = combatQueued[key]
+  if entry then
+    entry.fn = fn
+  else
+    entry = { fn = fn }
+    combatQueued[key] = entry
+    combatQueue[#combatQueue + 1] = entry
+  end
+  return false
+end
+
+---------------------------------------------------------------------------
 -- Secure command detection
 ---------------------------------------------------------------------------
 -- The whole slash token, up to the first space, goes to IsSecureCmd, which
@@ -499,6 +553,18 @@ end
 -- Escape a literal string for use inside a Lua pattern.
 function U.EscapePattern(text)
   return (text:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
+end
+
+-- FormatToPattern(fmt, unanchored): a GlobalStrings format ("Collected
+-- (%d/%d)", "No player named '%s' is currently playing.") as a pattern
+-- with a capture for each %d and %s, anchored to the whole text unless
+-- unanchored. nil for a format with positional arguments ("%1$d"), whose
+-- captures could come back in another order.
+function U.FormatToPattern(fmt, unanchored)
+  if type(fmt) ~= "string" or fmt:find("%%%d") then return nil end
+  local escaped = U.EscapePattern(fmt):gsub("%%%%d", "(%%d+)"):gsub("%%%%s", "(.+)")
+  if unanchored then return escaped end
+  return "^" .. escaped .. "$"
 end
 
 -- A Lua pattern that matches `text` case-insensitively against a stored name:
@@ -542,9 +608,10 @@ function U.Utf8Length(text)
   return n
 end
 
--- text cut to at most maxChars characters, ending in suffix ("..." by
--- default) when it was cut; a UTF-8 character is never split, so a cut
--- name in any language stays valid text
+-- text cut to at most maxChars characters (or the suffix alone when
+-- maxChars is shorter than it), ending in suffix ("..." by default) when
+-- it was cut; a UTF-8 character is never split, so a cut name in any
+-- language stays valid text
 --   U.Truncate("Schwarzfelsspitze", 10)   -- "Schwarz..."
 function U.Truncate(text, maxChars, suffix)
   text = tostring(text)

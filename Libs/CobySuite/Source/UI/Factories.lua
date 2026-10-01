@@ -1,6 +1,7 @@
 ---------------------------------------------------------------------------
 -- CobySuite Shared UI Factories: tooltips, buttons, toolbars, dropdowns,
--- dialogs, clear buttons, hover highlights, copy fields, checkbox menus
+-- dialogs, hover highlights, window state, checkbox menus, form widgets,
+-- search boxes, copy fields, favorite stars, metric lists, secure clickers, docking
 ---------------------------------------------------------------------------
 local UI = CobySuite_ApexFury.UI
 local U = CobySuite_ApexFury.Utilities
@@ -32,7 +33,7 @@ end
 --
 --   AddRichTooltip(frame, header, lines, anchor)
 --     Header + body lines. Each line may be:
---       "string"                              plain wrap-line, default white
+--       "string"                              plain wrap-line, the tooltip's default color
 --       { text, r, g, b }                     positional colored line (legacy)
 --       { text="...", color={r,g,b} }         keyed colored line
 --       { left="L", right="R",                double-line key/value
@@ -41,9 +42,9 @@ end
 --   AddDynamicTooltip(frame, builder, opts)
 --     builder(GameTooltip, frame) runs each OnEnter, building lines fresh.
 --     opts.anchor       = "ANCHOR_RIGHT" (default)
---     opts.cursorFollow = true → SetOwner with ANCHOR_CURSOR and re-run
---                                builder every frame for cursor-tracking
---                                tooltips (e.g. chart hover read-outs).
+--     opts.cursorFollow = true → re-run builder every frame while hovered,
+--                                for live read-outs (e.g. chart hover);
+--                                pass opts.anchor = "ANCHOR_CURSOR" to track the cursor.
 --
 --   PopulateBrandedTooltip(tooltip, opts)
 --     Fills a tooltip it is handed (it attaches no scripts) for "addon
@@ -205,15 +206,6 @@ function UI.AddDynamicTooltip(frame, builder, opts)
   end)
 end
 
-local function ParseHexColor(hex)
-  if type(hex) ~= "string" or #hex < 6 then return nil end
-  local r = tonumber(hex:sub(1, 2), 16)
-  local g = tonumber(hex:sub(3, 4), 16)
-  local b = tonumber(hex:sub(5, 6), 16)
-  if not (r and g and b) then return nil end
-  return r / 255, g / 255, b / 255
-end
-
 -- Populate an arbitrary tooltip frame with branded content. Useful in
 -- callbacks where Blizzard hands you the tooltip (LDB OnTooltipShow,
 -- addon-compartment OnEnter, etc.) and you can't attach a hover script.
@@ -229,7 +221,7 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
   local br, bg, bb = 1, 0.82, 0
   if opts.brandColor then
     if type(opts.brandColor) == "string" then
-      local r, g, b = ParseHexColor(opts.brandColor)
+      local r, g, b = U.HexToRGB(opts.brandColor)
       if r then br, bg, bb = r, g, b end
     elseif type(opts.brandColor) == "table" then
       br, bg, bb = opts.brandColor[1], opts.brandColor[2], opts.brandColor[3]
@@ -647,28 +639,6 @@ function UI.RestoreWindowState(frame, svTable, key, defaults)
 end
 
 ---------------------------------------------------------------------------
--- CreateClearButton
----------------------------------------------------------------------------
-function UI.CreateClearButton(editBox, onClear)
-  local btn = CreateFrame("Button", nil, editBox)
-  btn:SetSize(14, 14)
-  btn:SetPoint("RIGHT", -2, 0)
-  btn:SetNormalTexture("Interface\\FriendsFrame\\ClearBroadcastIcon")
-  btn:SetHighlightTexture("Interface\\FriendsFrame\\ClearBroadcastIcon")
-  btn:GetHighlightTexture():SetAlpha(0.5)
-  btn:SetScript("OnClick", function()
-    editBox:SetText("")
-    editBox:ClearFocus()
-    if onClear then onClear() end
-  end)
-  btn:Hide()
-  editBox:HookScript("OnTextChanged", function(s)
-    btn:SetShown(s:GetText() ~= "")
-  end)
-  return btn
-end
-
----------------------------------------------------------------------------
 -- BuildCheckboxMenu
 ---------------------------------------------------------------------------
 function UI.BuildCheckboxMenu(menuRoot, items, isChecked, setChecked, onChange)
@@ -723,23 +693,25 @@ end
 ---------------------------------------------------------------------------
 -- Standalone widget factories
 --
--- Seven widgets, all (parent, opts) -> widget. Designed to be usable both
--- as freestanding controls (toolbars, in-row inputs, monitoring widgets)
--- and as the building blocks of CreateFormLayout below.
+-- Eight widgets, all (parent, opts), usable as freestanding controls
+-- (toolbars, in-row inputs, monitoring widgets). CreateSettingsWindow builds
+-- its rows from the checkbox, radio, text, multi-line and slider ones (plus
+-- CreateDropDown). CreateSection returns header, divider.
 --
---   CreateCheckbox         UICheckButtonTemplate with optional label-on-right
+--   CreateCheckbox         UICheckButtonTemplate with an optional label (right, or left via labelSide)
+--   CreateRadioButton      UIRadioButtonTemplate with a clickable label; the caller groups them
 --   CreateNumberInput      InputBoxTemplate with parse/validate/commit lifecycle
 --   CreateTextInput        InputBoxTemplate for free-form text + select-on-focus
 --   CreateMultiLineInput   InputScrollFrameTemplate, word-wrapping text with the same commit lifecycle
---   CreateIconButton       square texture button with optional tint + highlight
+--   CreateIconButton       texture or atlas button (square by default) with optional tint + highlight
 --   CreateSlider           slider with stepped values and live value-text
 --   CreateSection          header FontString + horizontal divider line
 --
 -- Common conventions:
 --   * opts.tooltip       attaches AddTooltip
 --   * opts.point         passes through to SetPoint(unpack(point))
---   * opts.optionKey     stamped onto the widget as ._optionKey for any
---                        addon's existing Refresh-iterates-widgets pattern
+--   * opts.optionKey     stamped onto the widget as ._optionKey (checkbox,
+--                        inputs, slider; the radio button as .optionKey)
 ---------------------------------------------------------------------------
 
 ---------------------------------------------------------------------------
@@ -807,11 +779,9 @@ function UI.CreateCheckbox(parent, opts)
       cb.text:SetTextColor(opts.labelColor[1], opts.labelColor[2], opts.labelColor[3])
     end
 
-    -- Mouse-target overlay so the label area triggers the same tooltip
-    -- and toggles the checkbox when clicked. FontStrings can't receive
-    -- mouse events directly, so we use a transparent Frame sized to the
-    -- text. Setting frame strata above cb keeps it from being eaten by
-    -- nearby widgets, and EnableMouse routes hover/click here.
+    -- Mouse-target overlay so the label area toggles the checkbox when clicked
+    -- (and shows its tooltip when opts.tooltip is set). FontStrings can't receive
+    -- mouse events, so a transparent Frame sized to the text takes them.
     cb.labelHover = CreateFrame("Frame", nil, cb)
     cb.labelHover:SetAllPoints(cb.text)
     cb.labelHover:EnableMouse(true)
@@ -845,7 +815,7 @@ end
 --
 -- Blizzard's UIRadioButtonTemplate (16px circle) with a label on the right,
 -- styled like CreateCheckbox. Clicking a checked radio keeps it checked; the
--- group logic (one of N) lives in FormLayout:RadioGroup or the caller.
+-- group logic (one of N) lives with the caller (the settings window's Radio row).
 -- opts: name, label, labelFont, labelGap, tooltip, initialValue, optionKey,
 -- point, onChange(checked, self).
 ---------------------------------------------------------------------------
@@ -955,7 +925,7 @@ local function WireEditBoxCommit(eb, opts)
     self:ClearFocus()
   end)
 
-  -- Allow the form-builder / addon to push a new value programmatically
+  -- Lets the settings window or an addon push a new value programmatically
   -- (e.g. during a Refresh); it never calls onCommit.
   eb.SetCommittedValue = function(self, value)
     lastValid = value
@@ -1118,8 +1088,9 @@ end
 -- `opts.owners`, typically the button that opened it), the way Blizzard's
 -- menus close. A child listener frame carries the GLOBAL_MOUSE_DOWN
 -- registration, so it follows the frame's visibility without touching the
--- frame's own OnShow / OnHide / OnEvent scripts. The owner's own click then
--- runs after the hide, so a toggle button still toggles.
+-- frame's own OnShow / OnHide / OnEvent scripts. A press on an owner is
+-- ignored here, so the owner's own click decides and a toggle button closes
+-- the frame instead of hiding and reopening it.
 ---------------------------------------------------------------------------
 function UI.HideOnClickOutside(frame, opts)
   local owners = opts and opts.owners or {}
@@ -1462,8 +1433,8 @@ end
 -- CreateMultiLineInput
 --
 -- Blizzard's InputScrollFrameTemplate (a bordered, word-wrapping edit box
--- with a scrollbar that appears when the text overflows and a small grey
--- "used/max" counter) wired with the same parse / validate / commit lifecycle
+-- with a scrollbar that appears when the text overflows), with a small grey
+-- "used/max" counter, wired with the same parse / validate / commit lifecycle
 -- as CreateTextInput: Enter and losing focus commit, Escape reverts to the
 -- last committed value. Newlines are folded into spaces before commit
 -- unless opts.keepNewlines is set, since a whisper or a chat line has no
@@ -1533,7 +1504,14 @@ function UI.CreateMultiLineInput(parent, opts)
   WireEditBoxCommit(eb, {
     initialValue = opts.initialValue,
     numeric      = false,
-    parse        = function(text) return fold(opts.parse and opts.parse(text) or text) end,
+    -- opts.parse returning nil rejects the text (the last value comes back),
+    -- as in CreateTextInput; only a string result is folded
+    parse        = function(text)
+      local value = text
+      if opts.parse then value = opts.parse(text) end
+      if type(value) == "string" then return fold(value) end
+      return value
+    end,
     validate     = opts.validate,
     format       = opts.format,
     onCommit     = opts.onCommit,
@@ -1560,11 +1538,13 @@ end
 ---------------------------------------------------------------------------
 -- CreateMetricList(parent, metrics, opts): live label and value rows
 --
--- One row per metric { label, getValue, tooltip }, each anchored across
+-- One row per metric { label, getValue, tooltip, key }, each anchored across
 -- parent, shaded every other row: the label in gray, the value (getValue()'s
--- text) beside it. Returns { rows, Refresh }: Refresh() reads every getter
--- again under pcall, and one that errors shows opts.errorText. When and how
--- often to refresh (a throttle, memory sampling) is the caller's.
+-- text) beside it. Returns { rows, byKey, Refresh }: Refresh(...) reads
+-- every getter again under pcall, passing on its own arguments (one snapshot
+-- for all rows), and one that errors shows opts.errorText. byKey holds the
+-- row of each metric that has a key. When and how often to refresh (a
+-- throttle, memory sampling) is the caller's.
 --
 --   opts.rowHeight   default 18
 --   opts.labelWidth  default 140
@@ -1573,13 +1553,14 @@ end
 --   opts.padding     left and right inset, default 10
 --   opts.top         the first row's offset from parent's top, default 0
 --   opts.errorText   default "error" in U.Colors.TEXT_RED
+--   opts.onError     onError(metric, err) when a getter errors (a log line)
 ---------------------------------------------------------------------------
 function UI.CreateMetricList(parent, metrics, opts)
   opts = opts or {}
   local rowHeight, labelWidth = opts.rowHeight or 18, opts.labelWidth or 140
   local padding, top = opts.padding or 10, opts.top or 0
   local errorText = opts.errorText or U.WrapColor(U.Colors.TEXT_RED, "error")
-  local list = { rows = {} }
+  local list = { rows = {}, byKey = {} }
 
   for i, metric in ipairs(metrics) do
     local row = CreateFrame("Frame", nil, parent)
@@ -1613,16 +1594,111 @@ function UI.CreateMetricList(parent, metrics, opts)
       UI.AddTooltip(row, metric.tooltip)
     end
     list.rows[i] = row
+    if metric.key ~= nil then list.byKey[metric.key] = row end
   end
 
-  function list.Refresh()
+  function list.Refresh(...)
     for i, metric in ipairs(metrics) do
       local row = list.rows[i]
       if row then
-        local ok, val = pcall(metric.getValue)
+        local ok, val = pcall(metric.getValue, ...)
+        if not ok and opts.onError then opts.onError(metric, val) end
         row.Value:SetText(ok and val or errorText)
       end
     end
   end
   return list
+end
+
+---------------------------------------------------------------------------
+-- ConfigureSecureClicker(button, opts): the attributes an addon's own
+-- InsecureActionButtonTemplate button needs to run its action once, on
+-- release, whatever the ActionButtonUseKeyDown CVar says (the configuration
+-- verified in game on Currency Searcher's transfer, 2026-09-08). Returns
+-- the button. Set up out of combat, at build time; the button stays the
+-- addon's, and nothing here touches a Blizzard frame.
+--
+--   opts.type           "macro", "item" or "click"; leave it out for a
+--                       button whose type is set later (re-aimed in PreClick)
+--   opts.macrotext      for "macro"
+--   opts.item           for "item"
+--   opts.blockModified  shift, ctrl and alt clicks run nothing
+--
+-- CreateClickDelegate(name): a named 1x1 invisible button of type "click",
+-- the target of a macro's "/click <name>" line; aim it with
+-- SetAttribute("clickbutton", frame) before the line runs. /click resolves
+-- a name to the first frame registered under it, so create each name once.
+---------------------------------------------------------------------------
+function UI.ConfigureSecureClicker(button, opts)
+  opts = opts or {}
+  button:RegisterForClicks("LeftButtonUp")
+  button:SetAttribute("useOnKeyDown", false)
+  if opts.type then button:SetAttribute("type", opts.type) end
+  if opts.macrotext then button:SetAttribute("macrotext", opts.macrotext) end
+  if opts.item then button:SetAttribute("item", opts.item) end
+  if opts.blockModified then
+    button:SetAttribute("shift-type*", "")
+    button:SetAttribute("ctrl-type*", "")
+    button:SetAttribute("alt-type*", "")
+  end
+  return button
+end
+
+function UI.CreateClickDelegate(name)
+  local delegate = CreateFrame("Button", name, UIParent, "InsecureActionButtonTemplate")
+  delegate:SetSize(1, 1)
+  delegate:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
+  delegate:SetAlpha(0)
+  return UI.ConfigureSecureClicker(delegate, { type = "click" })
+end
+
+---------------------------------------------------------------------------
+-- DockBeside(frame, target, opts): anchors the addon's frame beside a
+-- Blizzard window (the vendor, the auction house), top edges level, on the
+-- side where it fits on screen. Only our frame is anchored; nothing of the
+-- target's changes. Returns "right" or "left", or false when it fits on
+-- neither side (the frame is then left where it was).
+--
+--   opts.gap         pixels between the two (default 4)
+--   opts.prefer      "right" (default) or "left": the side tried first
+--   opts.neighbours  names of panels other addons dock at the target's
+--                    right edge; a shown one within 40 pixels of that edge
+--                    is docked past instead
+---------------------------------------------------------------------------
+local function DockRightAnchor(target, neighbours)
+  local right = target:GetRight()
+  for _, name in ipairs(neighbours or {}) do
+    local panel = _G[name]
+    if panel and panel.IsShown and panel:IsShown() and panel.GetLeft then
+      local left = panel:GetLeft()
+      if left and right and math.abs(left - right) < 40 then return panel end
+    end
+  end
+  return target
+end
+
+local function DockRight(frame, target, gap, neighbours)
+  local anchor = DockRightAnchor(target, neighbours)
+  local right = anchor:GetRight()
+  if not right or right + gap + frame:GetWidth() > UIParent:GetRight() then return false end
+  frame:ClearAllPoints()
+  frame:SetPoint("TOPLEFT", anchor, "TOPRIGHT", gap, 0)
+  return "right"
+end
+
+local function DockLeft(frame, target, gap)
+  local left = target:GetLeft()
+  if not left or left - gap - frame:GetWidth() < UIParent:GetLeft() then return false end
+  frame:ClearAllPoints()
+  frame:SetPoint("TOPRIGHT", target, "TOPLEFT", -gap, 0)
+  return "left"
+end
+
+function UI.DockBeside(frame, target, opts)
+  opts = opts or {}
+  local gap = opts.gap or 4
+  if opts.prefer == "left" then
+    return DockLeft(frame, target, gap) or DockRight(frame, target, gap, opts.neighbours)
+  end
+  return DockRight(frame, target, gap, opts.neighbours) or DockLeft(frame, target, gap)
 end
