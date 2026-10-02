@@ -95,16 +95,16 @@ local function PrintStatus()
       Message("  Talent gate: |cFFFF8800inactive|r: " .. (gate.detail or gate.reason or "?"))
     end
   end
-  Message("  Enabled: " .. (enabled and "|cFF00FF00yes|r" or "|cFFFF4C4Cno|r"))
+  Message("  Alerts: " .. (enabled and "|cFF00FF00yes|r" or "|cFFFF4C4Cno|r"))
   Message("  Verbose: " .. (Config.Get(Config.Options.VERBOSE) and "|cFF00FF00on|r" or "|cFF888888off|r"))
-  Message("  Trigger spell ID: |cFFFFFFFF" .. tostring(spellID) .. "|r (cast event)")
-  Message("  Threshold: |cFFFFFFFF" .. tostring(threshold) .. " stacks|r")
-  Message("  Stack interval: |cFFFFFFFF" .. tostring(interval) .. "s|r")
+  Message("  Starts the timer: spell |cFFFFFFFF" .. tostring(spellID) .. "|r (cast event)")
+  Message("  Alert at stack: |cFFFFFFFF" .. tostring(threshold) .. "|r")
+  Message("  Seconds between stacks: |cFFFFFFFF" .. tostring(interval) .. "s|r")
   Message(string.format("  → Timer fires at |cFF00FF00%.0fs|r |cFF888888(suppress unless trigger duration >= %.1fs)|r",
     fireDelay, minDuration))
-  Message("  Combat-only: " .. (Config.Get(Config.Options.COMBAT_ONLY) and "|cFF00FF00yes|r (defer if not in combat)" or "|cFFFFFF00no|r (fire any time)"))
-  Message("  Actionability gate: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and "|cFF00FF00yes|r (defer in vehicle/mount/CC/possession)" or "|cFFFFFF00no|r (fire regardless of player state)"))
-  Message("  Min linger remaining: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MIN_REMAINING)) .. "s|r")
+  Message("  Hold until in combat: " .. (Config.Get(Config.Options.COMBAT_ONLY) and "|cFF00FF00yes|r (defer if not in combat)" or "|cFFFFFF00no|r (fire any time)"))
+  Message("  Hold until you can act: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and "|cFF00FF00yes|r (defer in vehicle/mount/CC/possession)" or "|cFFFFFF00no|r (fire regardless of player state)"))
+  Message("  Skip a held alert with less than: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MIN_REMAINING)) .. "s|r of Rising Fury left")
   Message("  Linger model: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_PER_STACK)) .. "s/stack|r, max |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_MAX)) .. "s|r, |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MAX_STACKS)) .. "|r max stacks")
   Message("  Sound ID: |cFFFFFFFF" .. tostring(soundID) .. "|r")
   Message("  Audio channel: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog") .. "|r")
@@ -195,7 +195,7 @@ CobySuite_ApexFury.Slash.Register({
   version  = VERSION,
   message  = Message,
   onEmpty  = ToggleSettings,   -- bare /af opens the settings window (most common entry point)
-  footer   = { "|cFF808080(All other settings live in the GUI, open with /af)|r" },
+  footer   = { "|cFF808080(Every other setting is in the settings window: /af)|r" },
   commands = CobySuite_ApexFury.Slash.StandardCommands({
     settings  = ToggleSettings,
     guide     = ToggleGuide,
@@ -209,7 +209,7 @@ CobySuite_ApexFury.Slash.Register({
       { name = "scan", usage = "scan [name]", help = "List active player buffs (find spell IDs)", run = ScanBuffs },
       { name = "overlay", aliases = { "show" }, help = "Open or close the on-screen status overlay", run = ToggleOverlay },
       { name = "channel", usage = "channel [dialog|master|sfx]", help = "Show or change the audio channel", run = SetChannel },
-      { name = "reset", help = "Restore all settings to defaults", run = function()
+      { name = "reset", help = "Restore every setting to its default", run = function()
         ApexFury.Config.Reset()
         Message("All settings restored to defaults.")
       end },

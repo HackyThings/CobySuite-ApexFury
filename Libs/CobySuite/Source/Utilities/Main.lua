@@ -10,11 +10,6 @@ local U = CobySuite_ApexFury.Utilities
 ---------------------------------------------------------------------------
 U.AH_CUT = 0.05
 
-function U.NetProfit(marketValue, buyPrice)
-  if not marketValue or marketValue <= 0 then return 0 end
-  return math.floor(marketValue * (1 - U.AH_CUT)) - buyPrice
-end
-
 ---------------------------------------------------------------------------
 -- Numbers
 ---------------------------------------------------------------------------
@@ -276,64 +271,6 @@ function U.TableCount(t)
   return count
 end
 
-function U.SortByColumn(data, columnKey, ascending)
-  table.sort(data, function(a, b)
-    local va, vb = a[columnKey], b[columnKey]
-    if va == nil and vb == nil then return false end
-    if va == nil then return false end
-    if vb == nil then return true end
-    if type(va) == "string" then
-      va = string.lower(va)
-      vb = type(vb) == "string" and string.lower(vb) or vb
-    end
-    if ascending then
-      return va < vb
-    else
-      return va > vb
-    end
-  end)
-end
-
-function U.NumberComparator(sortDir, field)
-  if sortDir == 1 then
-    return function(left, right) return (left[field] or 0) < (right[field] or 0) end
-  else
-    return function(left, right) return (left[field] or 0) > (right[field] or 0) end
-  end
-end
-
-function U.StringComparator(sortDir, field)
-  if sortDir == 1 then
-    return function(left, right) return (left[field] or "") < (right[field] or "") end
-  else
-    return function(left, right) return (left[field] or "") > (right[field] or "") end
-  end
-end
-
----------------------------------------------------------------------------
--- Gold formatting
----------------------------------------------------------------------------
-local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:0|t"
-local SILVER_ICON = "|TInterface\\MoneyFrame\\UI-SilverIcon:0|t"
-
-function U.FormatGoldPrecise(copper)
-  if not copper or copper == 0 then return "0.00" .. GOLD_ICON end
-  local negative = copper < 0
-  copper = math.abs(copper)
-  local prefix = negative and "-" or ""
-  local gold = copper / 10000
-  if gold >= 1000000 then
-    return prefix .. string.format("%.2fm", gold / 1000000) .. GOLD_ICON
-  elseif gold >= 1000 then
-    return prefix .. string.format("%.2fk", gold / 1000) .. GOLD_ICON
-  elseif gold >= 1 then
-    return prefix .. string.format("%.2f", gold) .. GOLD_ICON
-  end
-  local silver = copper / 100
-  if silver >= 1 then return prefix .. string.format("%.1f", silver) .. SILVER_ICON end
-  return prefix .. tostring(copper) .. "c"
-end
-
 ---------------------------------------------------------------------------
 -- Row styling
 ---------------------------------------------------------------------------
@@ -350,19 +287,6 @@ function U.AddAlternatingRowBg(row, index)
   elseif row._altRowBg then
     row._altRowBg:Hide()
   end
-end
-
----------------------------------------------------------------------------
--- Item key utilities
----------------------------------------------------------------------------
-function U.ItemKeyString(itemKey)
-  local suffix = itemKey.itemSuffix or 0
-  local level = itemKey.itemLevel or 0
-  local pet = itemKey.battlePetSpeciesID or 0
-  if suffix == 0 and level == 0 and pet == 0 then
-    return itemKey.itemID .. "_0_0_0"
-  end
-  return itemKey.itemID .. "_" .. suffix .. "_" .. level .. "_" .. pet
 end
 
 ---------------------------------------------------------------------------
@@ -646,4 +570,24 @@ function U.FormatMoneyText(copper)
     return ("%ds"):format(silver)
   end
   return ("%dc"):format(cents)
+end
+
+-- Money with the game's coin icons, for windows and tooltips:
+-- C_CurrencyInfo.GetCoinTextureString at fontHeight (default 14). A negative
+-- amount shows "-" before its coins; opts.sign = true also puts "+" before a
+-- positive one (a difference). A secret or non-finite amount gives "?"; a
+-- failed call falls back to FormatMoneyText's plain "150g 25s".
+function U.FormatMoneyIcons(copper, fontHeight, opts)
+  if U.IsSecret(copper) or not U.IsFiniteNumber(copper) then return "?" end
+  local sign = ""
+  if copper < 0 then
+    sign, copper = "-", -copper
+  elseif copper >= 1 and opts and opts.sign then
+    sign = "+"
+  end
+  copper = math.floor(copper)
+  local coins = C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString
+  local ok, text = pcall(coins, copper, fontHeight or 14)
+  if not ok or type(text) ~= "string" or U.IsSecret(text) then text = U.FormatMoneyText(copper) end
+  return sign .. text
 end

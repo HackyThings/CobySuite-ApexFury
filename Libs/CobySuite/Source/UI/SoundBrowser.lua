@@ -49,12 +49,13 @@ local PREVIEW_SZ  = 14
 -- Column layout shared by header + rows
 ---------------------------------------------------------------------------
 local DEFAULT_COLUMNS = {
-  { key = "name",   label = "Name",   width = 240, sortable = true,  justify = "LEFT",
-    tooltip = "Sound name. Click to preview and select." },
-  { key = "source", label = "Source", width = 90,  sortable = true,  justify = "LEFT",
-    tooltip = "Where the sound comes from: a Blizzard pack or the addon that registered it." },
+  { key = "name",   label = "Name",   width = 210, sortable = true,  justify = "LEFT",
+    tooltip = "Click a row to preview and select its sound." },
+  -- wide enough for a pack's whole name ("NorthernSkyRaidTools" was cut at 90, 2026-10-01)
+  { key = "source", label = "Source", width = 150, sortable = true,  justify = "LEFT",
+    tooltip = "Blizzard, or the addon whose sound pack it is." },
   { key = "kind",   label = "Type",   width = 70,  sortable = true,  justify = "LEFT", stretch = true,
-    tooltip = "Audio type: SoundKit (built-in IDs) or LSM (LibSharedMedia)." },
+    tooltip = "Built-in game sound or addon sound pack." },
 }
 
 ---------------------------------------------------------------------------
@@ -66,14 +67,58 @@ local function PillColorForEntry(entry)
   if entry.source == "LibSharedMedia" then
     return SC[entry.pack] or SC.Other or "AAAAAA"
   end
-  return SC[entry.source] or "FFFFFF"
+  return SC[entry.source] or U.ColorToHex(TC.HIGHLIGHT_WHITE)
 end
+
+-- Plain words for the catalog's data names (Cobanyte, 2026-10-01): the
+-- entries keep "SoundKit", "LSM" and "Other LSM", only what a player reads
+-- changes
+local KIND_LABELS = { SoundKit = "Built-in game sound", LSM = "Sound pack" }
+local PACK_LABELS = { ["Other LSM"] = "Other sound packs" }
+
+-- entryOrKind: a catalog entry, or its kind ("SoundKit", "LSM")
+local function KindLabel(entryOrKind)
+  local kind = type(entryOrKind) == "table" and entryOrKind.kind or entryOrKind
+  return KIND_LABELS[kind] or kind or ""
+end
+
+local function PackLabel(name)
+  return PACK_LABELS[name] or name
+end
+
+-- The same words for a consumer that shows a picked sound outside the
+-- browser (ApexFury's selected-sound line): KindLabel(entry or kind) and
+-- PackLabel(packName)
+SoundBrowser.KindLabel = KindLabel
+SoundBrowser.PackLabel = PackLabel
+
+-- A row's tooltip lines into any tooltip: name, source and type; with
+-- shift, the sound's file path or ID too (the hover passes IsShiftKeyDown();
+-- the Verify tooltip grid passes either, through frame:FillRowTooltip)
+local FillRowTooltip
 
 local function SourceDisplayName(entry)
   if entry.source == "LibSharedMedia" then
-    return entry.pack or "LSM"
+    return entry.pack and PackLabel(entry.pack) or "Sound pack"
   end
   return entry.source or ""
+end
+
+FillRowTooltip = function(tip, entry, shift)
+  local w = TC.HIGHLIGHT_WHITE
+  tip:SetText(U.StripColors(entry.label or ""), w[1], w[2], w[3])
+  local color = PillColorForEntry(entry)
+  tip:AddLine("Source: |cFF" .. color .. SourceDisplayName(entry) .. "|r", w[1], w[2], w[3])
+  tip:AddLine("Type: |cFF888888" .. KindLabel(entry) .. "|r", w[1], w[2], w[3])
+  if shift then
+    if entry.path then
+      tip:AddLine("|cFF666666" .. entry.path .. "|r", w[1], w[2], w[3], true)
+    elseif type(entry.raw) == "number" then
+      tip:AddLine("|cFF666666ID: " .. entry.raw .. "|r", w[1], w[2], w[3])
+    end
+  end
+  tip:AddLine(" ", w[1], w[2], w[3])
+  tip:AddLine("|cFFAAAAAAClick to use this sound|r", w[1], w[2], w[3])
 end
 
 ---------------------------------------------------------------------------
@@ -87,7 +132,19 @@ local SORT_KEY_FIELDS = {
   kind   = "_sortKind",
 }
 
+local KIND_SORT = { SoundKit = "built-in game sound", LSM = "sound pack" }
+
 local function SortEntries(entries, key, ascending)
+  if key == "kind" then
+    -- by the words shown, not the data names, so the column reads in order
+    local function k(e) return KIND_SORT[e.kind] or e._sortKind or "" end
+    if ascending then
+      table.sort(entries, function(a, b) return k(a) < k(b) end)
+    else
+      table.sort(entries, function(a, b) return k(a) > k(b) end)
+    end
+    return
+  end
   local field = SORT_KEY_FIELDS[key] or "_sortName"
   if ascending then
     table.sort(entries, function(a, b) return (a[field] or "") < (b[field] or "") end)
@@ -128,7 +185,8 @@ local function EnsureRowStructure(row, columns)
   tex:SetVertexColor(0.7, 0.9, 1.0)
   local hl = play:CreateTexture(nil, "HIGHLIGHT")
   hl:SetAllPoints()
-  hl:SetColorTexture(1, 1, 1, 0.3)
+  local w = TC.HIGHLIGHT_WHITE
+  hl:SetColorTexture(w[1], w[2], w[3], 0.3)
   row.Preview = play
 
   -- Cells per column (text only; the name cell hosts the play icon to the left)
@@ -142,12 +200,14 @@ local function EnsureRowStructure(row, columns)
   end
 end
 
-local function RepositionRow(row, columns)
+-- bounds: the header's GetColumnBounds(), so the stretch column's text gets
+-- the width the header gives it rather than its nominal one
+local function RepositionRow(row, columns, bounds)
   local x = 0
   for i, colDef in ipairs(columns) do
     local cell = row._cells[i]
     if not cell then break end
-    local w = colDef.width
+    local w = bounds and bounds[i] and bounds[i].width or colDef.width
 
     if colDef.key == "name" then
       -- Preview icon at left, text follows
@@ -165,9 +225,9 @@ local function RepositionRow(row, columns)
   end
 end
 
-local function PopulateRow(row, entry, columns, currentValue, rowIndex)
+local function PopulateRow(row, entry, columns, currentValue, rowIndex, bounds)
   EnsureRowStructure(row, columns)
-  RepositionRow(row, columns)
+  RepositionRow(row, columns, bounds)
   row._entry = entry
 
   for i, colDef in ipairs(columns) do
@@ -175,13 +235,14 @@ local function PopulateRow(row, entry, columns, currentValue, rowIndex)
     if not cell then break end
     if colDef.key == "name" then
       cell.text:SetText(entry.label or "")
-      cell.text:SetTextColor(1, 1, 1)
+      local w = TC.HIGHLIGHT_WHITE
+      cell.text:SetTextColor(w[1], w[2], w[3])
     elseif colDef.key == "source" then
       local color = PillColorForEntry(entry)
       cell.text:SetText("|cFF" .. color .. SourceDisplayName(entry) .. "|r")
     elseif colDef.key == "kind" then
       local lg = TC.LIGHT_GRAY
-      cell.text:SetText(entry.kind or "")
+      cell.text:SetText(KindLabel(entry))
       cell.text:SetTextColor(lg[1], lg[2], lg[3])
     end
   end
@@ -280,6 +341,8 @@ function SoundBrowser.Create(parent, opts)
     columns        = DEFAULT_COLUMNS,
     persistenceKey = opts.persistenceKey,
     persistence    = opts.persistence,
+    -- 2: Source went from 90 to 150 (2026-10-01); every width saved before is dropped once
+    widthsVersion  = 2,
     utilities      = utilsForHeader,
     headerHeight   = HEADER_H,
     onSort = function(key, dir)
@@ -294,7 +357,7 @@ function SoundBrowser.Create(parent, opts)
       if not scrollBox then return end
       scrollBox:ForEachFrame(function(row)
         if row._cells and row._entry then
-          RepositionRow(row, header:GetColumns())
+          RepositionRow(row, header:GetColumns(), header:GetColumnBounds())
         end
       end)
     end,
@@ -332,27 +395,27 @@ function SoundBrowser.Create(parent, opts)
       onPreview(row._entry.value, row._entry)
     end)
 
-    -- Tooltip with technical detail
+    -- The tooltip: name, source and type; the sound's file path or ID only
+    -- while Shift is held (redrawn when Shift goes down or up)
+    local function ShowRowTooltip(self)
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      FillRowTooltip(GameTooltip, self._entry, IsShiftKeyDown())
+      GameTooltip:Show()
+    end
     row:SetScript("OnEnter", function(self)
       if not self._entry then return end
-      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-      GameTooltip:SetText(U.StripColors(self._entry.label or ""), 1, 1, 1)
-      local color = PillColorForEntry(self._entry)
-      GameTooltip:AddLine("Source: |cFF" .. color .. SourceDisplayName(self._entry) .. "|r", 1, 1, 1)
-      GameTooltip:AddLine("Type: |cFF888888" .. (self._entry.kind or "") .. "|r", 1, 1, 1)
-      if self._entry.path then
-        GameTooltip:AddLine(" ", 1, 1, 1)
-        GameTooltip:AddLine("|cFF666666" .. self._entry.path .. "|r", 1, 1, 1, true)
-      elseif type(self._entry.raw) == "number" then
-        GameTooltip:AddLine("|cFF666666ID: " .. self._entry.raw .. "|r", 1, 1, 1)
-      end
-      GameTooltip:AddLine(" ", 1, 1, 1)
-      GameTooltip:AddLine("|cFFAAAAAAClick to use this sound|r", 1, 1, 1)
-      GameTooltip:Show()
+      ShowRowTooltip(self)
+      self:RegisterEvent("MODIFIER_STATE_CHANGED")
     end)
-    row:SetScript("OnLeave", GameTooltip_Hide)
+    row:SetScript("OnEvent", function(self)
+      if self._entry and GameTooltip:IsOwned(self) then ShowRowTooltip(self) end
+    end)
+    row:SetScript("OnLeave", function(self)
+      self:UnregisterEvent("MODIFIER_STATE_CHANGED")
+      GameTooltip_Hide()
+    end)
 
-    PopulateRow(row, data, header:GetColumns(), getCurrentValue(), rowIndexOf[data])
+    PopulateRow(row, data, header:GetColumns(), getCurrentValue(), rowIndexOf[data], header:GetColumnBounds())
   end)
 
   ScrollUtil.InitScrollBoxListWithScrollBar(scrollBox, scrollBar, scrollView)
@@ -459,17 +522,17 @@ function SoundBrowser.Create(parent, opts)
       end)
     for _, src in ipairs(sources) do
       local capt = src
-      root:CreateRadio(string.format("%s (%d)", src, counts[src] or 0),
+      root:CreateRadio(string.format("%s (%d)", PackLabel(src), counts[src] or 0),
         function() return activeSource == capt end,
         function()
           activeSource = capt
-          sourceDD:OverrideText(capt)
+          sourceDD:OverrideText(PackLabel(capt))
           RebuildAllEntries()
           Refresh()
         end)
     end
   end)
-  sourceDD:OverrideText(activeSource)
+  sourceDD:OverrideText(PackLabel(activeSource))
 
   ---------------------------------------------------------------------------
   -- Search wiring
@@ -489,6 +552,12 @@ function SoundBrowser.Create(parent, opts)
   ---------------------------------------------------------------------------
   -- Public methods
   ---------------------------------------------------------------------------
+  -- A row's tooltip for an entry into a tooltip it is handed, with or without
+  -- the Shift lines (the Verify tooltip grid shows both)
+  function frame:FillRowTooltip(tip, entry, shift)
+    FillRowTooltip(tip, entry, shift)
+  end
+
   function frame:Refresh()
     RebuildAllEntries()
     Refresh()

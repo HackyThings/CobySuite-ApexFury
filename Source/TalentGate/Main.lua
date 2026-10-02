@@ -289,7 +289,7 @@ end
 local function ComputeReason(s)
   if not s.apiAvailable then
     return "api_unavailable",
-      "Talent data still loading. Changing talents or /reload checks again."
+      "Talent data still loading. ApexFury checks again when you change talents or zones."
   elseif not s.isEvoker then
     return "wrong_class",
       string.format("Class is %s: addon is Devastation-Evoker only.",
@@ -464,7 +464,7 @@ end
 -- while its node has not been found (hasAnimosity=nil).
 ---------------------------------------------------------------------------
 local TALENT_DATA_KEY  = "Talent data not loaded."
-local TALENT_DATA_BODY = "ApexFury stays off until it loads. Changing talents or /reload checks again."
+local TALENT_DATA_BODY = "ApexFury stays off until it loads, and checks again when you change talents or zones."
 
 local EmitTransition
 function EmitTransition(prev, next, isInitial)
@@ -628,6 +628,12 @@ local function Evaluate(opts)
   current = next
   ApplyActivation()
   LogSnapshot()
+  -- An open settings window shows this reading (its status card and talent
+  -- tiles); this repaints it without touching staged edits, and reaches
+  -- nothing in the watcher
+  if ApexFury.Config and ApexFury.Config.NotifySettingsWindow then
+    ApexFury.Config.NotifySettingsWindow()
+  end
 
   -- Emission gating: initial login always speaks; subsequent calls only on
   -- actual differences (so respec-spam debounces don't print 12 lines).

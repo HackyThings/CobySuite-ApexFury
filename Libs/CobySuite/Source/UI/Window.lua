@@ -196,6 +196,7 @@ function UI.CreateWindow(opts)
   local function StopSizing(self)
     if not self._sizing then return end
     self._sizing = false
+    if self.ResizeGrip then self.ResizeGrip:SetScript("OnUpdate", nil) end
     self:StopMovingOrSizing()
     -- the drag's screen-edge limits end with it
     local b = self._bounds
@@ -235,15 +236,27 @@ function UI.CreateWindow(opts)
         f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
         -- the corner stops at the screen's right and bottom edges: past them
         -- the clamp pushes the window back and the drag runs away
+        local b = f._bounds
+        local maxW, maxH = b.maxWidth, b.maxHeight
         local screenW = ScreenSize(f)
         if screenW then
-          local b = f._bounds
-          f:SetResizeBounds(b.minWidth, b.minHeight, math.max(b.minWidth, math.min(b.maxWidth, screenW - left)),
-            math.max(b.minHeight, math.min(b.maxHeight, top)))
+          maxW = math.max(b.minWidth, math.min(b.maxWidth, screenW - left))
+          maxH = math.max(b.minHeight, math.min(b.maxHeight, top))
+          f:SetResizeBounds(b.minWidth, b.minHeight, maxW, maxH)
         end
+        -- the size follows the cursor's position, not its movement: StartSizing
+        -- kept moving the corner after the window stopped at its minimum, so
+        -- coming back grew it while the cursor was still inside (Verify q48-33)
+        f._sizing = true
+        f.ResizeGrip:SetScript("OnUpdate", function()
+          local cx, cy = GetCursorPosition()
+          local scale = f:GetEffectiveScale()
+          if not (cx and cy and scale and scale > 0) then return end
+          local w = math.max(b.minWidth, math.min(maxW, cx / scale - left))
+          local h = math.max(b.minHeight, math.min(maxH, top - cy / scale))
+          f:SetSize(w, h)
+        end)
       end
-      f._sizing = true
-      f:StartSizing("BOTTOMRIGHT")
     end)
     f.ResizeGrip:SetScript("OnMouseUp", function(_, button)
       if button ~= "LeftButton" then return end

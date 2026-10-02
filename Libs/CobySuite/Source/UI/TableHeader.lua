@@ -9,6 +9,7 @@
 CobySuite_ApexFury.UI = CobySuite_ApexFury.UI or {}
 
 local MIN_COL_WIDTH = 25
+local DEFAULT_COL_WIDTH = 150   -- a column declared without a width
 local SortDir = CobySuite_ApexFury.SortDir
 local IsFiniteNumber = CobySuite_ApexFury.Utilities.IsFiniteNumber
 
@@ -28,7 +29,7 @@ end
 local DEFAULT_HEADER_BG    = {0.1, 0.1, 0.1, 0.5}
 local DEFAULT_DIVIDER      = {0.3, 0.3, 0.3, 0.8}
 local DEFAULT_RESIZE_HL    = {0.5, 0.5, 1.0, 0.5}
-local DEFAULT_HEADER_FONT  = "GameFontNormalSmall"
+local DEFAULT_HEADER_FONT  = CobySuite_ApexFury.Utilities.Fonts.SMALL
 
 CobySuite_ApexFury.UI.TableHeaderMixin = {}
 local Mixin = CobySuite_ApexFury.UI.TableHeaderMixin
@@ -37,7 +38,7 @@ local Mixin = CobySuite_ApexFury.UI.TableHeaderMixin
 -- Init
 -------------------------------------------------------------------------------
 -- opts:
---   columns         (table)    array of {key, label, width, sortable?, stretch?, tooltip?, justify?}
+--   columns         (table)    array of {key, label, width (default 150), sortable?, stretch?, tooltip?, justify?}
 --                              At most one column stretches, to fill what the
 --                              others leave. It may sit anywhere: the last
 --                              column runs to the header's right edge, and one
@@ -48,7 +49,11 @@ local Mixin = CobySuite_ApexFury.UI.TableHeaderMixin
 --                              GetColumnBounds() for where each column sits,
 --                              so rows can follow.
 --   persistenceKey  (string?)  unique key for saving column widths
---   persistence     (table?)   { savedVariable = "NAME", path = "key" } for width storage
+--   persistence     (table?)   { savedVariable = "NAME", path = "key" } for width storage;
+--                              only the columns a player resized are saved
+--   widthsVersion   (number?)  saved widths of another version are ignored, so
+--                              new default widths reach players who saved the
+--                              old ones (the sound browser's Source column)
 --   utilities       (table?)   addon's Utilities table (Colors, HeaderBg, Fonts, AddTooltip; AddTooltip defaults to CobySuite.UI.AddTooltip)
 --   onSort          (fn?)      callback(key, dir) fired on column click
 --   onColumnResize  (fn?)      callback() fired whenever column widths change:
@@ -95,6 +100,7 @@ function Mixin:Init(opts)
   self._resizeHandles = {}
   self._persistenceKey = opts.persistenceKey
   self._persistence = opts.persistence
+  self._widthsVersion = opts.widthsVersion
   self._utilities = opts.utilities
   self._onSort = opts.onSort
   self._onColumnResize = opts.onColumnResize
@@ -180,7 +186,7 @@ function Mixin:_OthersWidth(index)
   local total = 0
   for j, c in ipairs(self._columns) do
     if j ~= index and not c.stretch then
-      total = total + (self._fitToWidth and MIN_COL_WIDTH or (c.width or 150))
+      total = total + (self._fitToWidth and MIN_COL_WIDTH or (c.width or DEFAULT_COL_WIDTH))
     end
   end
   return total
@@ -195,9 +201,11 @@ function Mixin:_SaveWidths()
   if not sv then return end
   local path = self._persistence.path
   if not sv[path] then sv[path] = {} end
-  local saved = {}
+  -- only the columns a player resized (dragged or fitted), so a later
+  -- default reaches every column they left alone
+  local saved = { _v = self._widthsVersion }
   for _, col in ipairs(self._columns) do
-    if col.key and col.width and not col.stretch then
+    if col.key and col.width and not col.stretch and col.userSet then
       saved[col.key] = col.want or col.width
     end
   end
@@ -211,13 +219,14 @@ function Mixin:_RestoreWidths()
   local saved = sv[self._persistence.path]
     and sv[self._persistence.path][self._persistenceKey]
   if type(saved) ~= "table" then return end
+  if self._widthsVersion and saved._v ~= self._widthsVersion then return end
   for _, col in ipairs(self._columns) do
     if col.key and not col.stretch and saved[col.key] ~= nil then
       -- Earlier builds could save negative widths from a narrow window;
       -- anything that is not a usable width keeps the default
       local w = tonumber(saved[col.key])
       if IsFiniteNumber(w) and w >= MIN_COL_WIDTH then
-        col.width, col.want = w, w
+        col.width, col.want, col.userSet = w, w, true
       end
     end
   end
@@ -253,7 +262,7 @@ function Mixin:_BuildHeaders()
       btn:SetPoint("TOPRIGHT", self, "TOPRIGHT", 0, 0)
       btn:SetHeight(h)
     else
-      btn:SetSize(col.width or 150, h)
+      btn:SetSize(col.width or DEFAULT_COL_WIDTH, h)
       btn:SetPoint("TOPLEFT", x, 0)
     end
 
@@ -298,7 +307,7 @@ function Mixin:_BuildHeaders()
     if not col.stretch then
       local handle = CreateFrame("Button", nil, self)
       handle:SetSize(6, h)
-      handle:SetPoint("TOPLEFT", x + (col.width or 150) - 3, 0)
+      handle:SetPoint("TOPLEFT", x + (col.width or DEFAULT_COL_WIDTH) - 3, 0)
       handle:SetFrameLevel(self:GetFrameLevel() + 2)
 
       local highlight = handle:CreateTexture(nil, "OVERLAY")
@@ -320,7 +329,7 @@ function Mixin:_BuildHeaders()
         header._dragIndex = capturedIndex
         header._dragHighlight = highlight
         header._dragStartX = GetCursorPosition() / (header:GetEffectiveScale() or 1)
-        header._dragStartWidth = header._columns[capturedIndex].width or 150
+        header._dragStartWidth = header._columns[capturedIndex].width or DEFAULT_COL_WIDTH
       end)
 
       -- the drag ends on the release too, not only when OnUpdate next sees
@@ -342,7 +351,7 @@ function Mixin:_BuildHeaders()
       end)
 
       self._resizeHandles[i] = handle
-      x = x + (col.width or 150)
+      x = x + (col.width or DEFAULT_COL_WIDTH)
     end
   end
 end
@@ -393,6 +402,7 @@ function Mixin:_StopDrag()
   end
   local index = self._dragIndex
   local moved = index and self._columns[index] and self._columns[index].width ~= self._dragStartWidth
+  if moved then self._columns[index].userSet = true end
   if self._fitToWidth then
     -- the columns that gave way keep the widths on screen
     for _, c in ipairs(self._columns) do
@@ -460,12 +470,12 @@ end
 function Mixin:GetColumnBounds()
   local fixed = 0
   for _, col in ipairs(self._columns) do
-    if not col.stretch then fixed = fixed + (col.width or 150) end
+    if not col.stretch then fixed = fixed + (col.width or DEFAULT_COL_WIDTH) end
   end
   local stretch = math.max((self:GetWidth() or 0) - self._leftPadding - fixed, self:_StretchRoom())
   local bounds, x = {}, self._leftPadding
   for i, col in ipairs(self._columns) do
-    local width = col.stretch and stretch or (col.width or 150)
+    local width = col.stretch and stretch or (col.width or DEFAULT_COL_WIDTH)
     bounds[i] = { key = col.key, left = x, width = width }
     x = x + width
   end
@@ -490,19 +500,19 @@ function Mixin:RepositionHeaders()
       btn:SetPoint("TOPRIGHT", self, "TOPRIGHT", 0, 0)
       btn:SetHeight(self._headerHeight)
     else
-      btn:SetSize(col.width or 150, self._headerHeight)
+      btn:SetSize(col.width or DEFAULT_COL_WIDTH, self._headerHeight)
       btn:SetPoint("TOPLEFT", x, 0)
     end
 
     local handle = self._resizeHandles[i]
     if handle then
       handle:ClearAllPoints()
-      local edge = self:_HandleSide(i) < 0 and x or x + (col.width or 150)
+      local edge = self:_HandleSide(i) < 0 and x or x + (col.width or DEFAULT_COL_WIDTH)
       handle:SetPoint("TOPLEFT", edge - 3, 0)
     end
 
     if not col.stretch then
-      x = x + (col.width or 150)
+      x = x + (col.width or DEFAULT_COL_WIDTH)
     end
   end
 end
@@ -523,16 +533,6 @@ end
 
 function Mixin:GetSort()
   return self._sortKey, self._sortDir
-end
-
-function Mixin:ClearSort()
-  self._sortKey = nil
-  self._sortDir = nil
-  for _, btn in ipairs(self._headerButtons) do
-    if btn._sortArrow then
-      btn._sortArrow:SetText("")
-    end
-  end
 end
 
 -- The width a column needs: its title (and sort arrow) and, through
@@ -592,6 +592,7 @@ function Mixin:AutoFitColumn(colIndex)
   local room = self:GetWidth() - self._leftPadding - self:_OthersWidth(colIndex) - self:_StretchRoom()
   col.width = ClampWidth(maxWidth, room)
   col.want = col.width
+  col.userSet = true
   if self._fitToWidth then
     self._holdIndex = colIndex
     self:FitColumns()
@@ -613,6 +614,7 @@ function Mixin:ResetColumnWidths()
       col.width = col._defaultWidth
       col.want = col._defaultWidth
     end
+    col.userSet = nil
   end
   self:RepositionHeaders()
   if self._onColumnResize then

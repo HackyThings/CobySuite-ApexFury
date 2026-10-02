@@ -179,7 +179,7 @@ function Slash.StandardCommands(opts)
     Add({ name = "show", help = opts.showHelp or "Open or close the main window", run = function() opts.show() end })
   end
   if opts.settings then
-    Add({ name = "settings", aliases = { "config", "options" }, help = "Open the settings window",
+    Add({ name = "settings", aliases = { "config", "options" }, help = "Open or close the settings window",
           run = function() opts.settings() end })
   end
   if opts.guide then

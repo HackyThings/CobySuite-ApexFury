@@ -1,6 +1,6 @@
 ---------------------------------------------------------------------------
 -- CobySuite Shared UI Factories: tooltips, buttons, toolbars, dropdowns,
--- dialogs, hover highlights, window state, checkbox menus, form widgets,
+-- hover highlights, window state, checkbox menus, form widgets,
 -- search boxes, copy fields, favorite stars, metric lists, secure clickers, docking
 ---------------------------------------------------------------------------
 local UI = CobySuite_ApexFury.UI
@@ -45,6 +45,23 @@ end
 --     opts.cursorFollow = true → re-run builder every frame while hovered,
 --                                for live read-outs (e.g. chart hover);
 --                                pass opts.anchor = "ANCHOR_CURSOR" to track the cursor.
+--     opts.fillable     = true → the builder writes only to the tooltip it is
+--                                handed (never GameTooltip, no other effect),
+--                                so FillTooltipFor may run it
+--
+--   FillTooltipFor(tooltip, frame)
+--     Fills a tooltip it is handed with what `frame` shows on hover, for a
+--     frame given its tooltip by one of the five above (the item one
+--     without the Shift comparison, a dynamic one only with opts.fillable);
+--     false, "none" for any other frame, and false, "empty" when the filler
+--     returned false (an item tooltip with no item: nothing to show now). It
+--     writes only to `tooltip`: no hover
+--     script, comparison or cursor-follow runs, and the latest helper call
+--     on a recycled frame replaces its filler. Each
+--     helper keeps its filler in a library-side table with weak keys (no
+--     field on the frame), so the Verify panel's tooltip grid renders the
+--     real content into its own tooltip frames without running OnEnter,
+--     which would fill the shared GameTooltip.
 --
 --   PopulateBrandedTooltip(tooltip, opts)
 --     Fills a tooltip it is handed (it attaches no scripts) for "addon
@@ -60,10 +77,31 @@ end
 --                         tooltip:SetOwner(opts.owner, opts.anchor) first
 --       opts.anchor      "ANCHOR_RIGHT" (default), used with opts.owner
 ---------------------------------------------------------------------------
+-- Each helper's filler, by frame, for FillTooltipFor
+local fillers = setmetatable({}, { __mode = "k" })
+
+function UI.FillTooltipFor(tooltip, frame)
+  local fill = fillers[frame]
+  if not fill then return false, "none" end
+  -- a filler returns false when it has nothing to show (no item, no answer yet)
+  if fill(tooltip, frame) == false then return false, "empty" end
+  return true
+end
+
+-- Whether FillTooltipFor would fill a tooltip for this frame (read only)
+function UI.HasTooltipFiller(frame)
+  return fillers[frame] ~= nil
+end
+
 function UI.AddTooltip(frame, text, anchor)
+  local function Fill(tip)
+    local w = U.Colors.HIGHLIGHT_WHITE
+    tip:SetText(text, w[1], w[2], w[3], 1, true)
+  end
+  fillers[frame] = Fill
   frame:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
-    GameTooltip:SetText(text, 1, 1, 1, 1, true)
+    Fill(GameTooltip)
     GameTooltip:Show()
   end)
   frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -86,15 +124,23 @@ end
 function UI.AddItemTooltip(frame, itemIDOrFunc, anchor, opts)
   opts = opts or {}
 
-  local function ShowFor(self)
-    local item = ResolveID(itemIDOrFunc, self)
-    if not item then return end
-    GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
+  -- the item's own lines; false when there is no item to show
+  local function Fill(tip, owner)
+    local item = ResolveID(itemIDOrFunc, owner)
+    if not item then return false end
     if type(item) == "string" then
-      GameTooltip:SetHyperlink(item)
+      tip:SetHyperlink(item)
     else
-      GameTooltip:SetItemByID(item)
+      tip:SetItemByID(item)
     end
+    return true
+  end
+  fillers[frame] = Fill
+
+  local function ShowFor(self)
+    if not ResolveID(itemIDOrFunc, self) then return end
+    GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
+    Fill(GameTooltip, self)
     local compare = opts.compareOnShift
     if type(compare) == "function" then compare = compare(self) end
     if compare and IsShiftKeyDown() and GameTooltip_ShowCompareItem then
@@ -134,50 +180,61 @@ function UI.AddItemTooltip(frame, itemIDOrFunc, anchor, opts)
 end
 
 function UI.AddSpellTooltip(frame, spellIDOrFunc, anchor)
+  local function Fill(tip, owner)
+    local spellID = ResolveID(spellIDOrFunc, owner)
+    if not spellID then return false end
+    tip:SetSpellByID(spellID)
+    return true
+  end
+  fillers[frame] = Fill
   frame:SetScript("OnEnter", function(self)
-    local spellID = ResolveID(spellIDOrFunc, self)
-    if not spellID then return end
+    if not ResolveID(spellIDOrFunc, self) then return end
     GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
-    GameTooltip:SetSpellByID(spellID)
+    Fill(GameTooltip, self)
     GameTooltip:Show()
   end)
   frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
-local function AppendRichLine(line)
+local function AppendRichLine(tip, line)
   if type(line) == "string" then
-    GameTooltip:AddLine(line, nil, nil, nil, true)
+    tip:AddLine(line, nil, nil, nil, true)
   elseif type(line) == "table" then
     if line.left ~= nil or line.right ~= nil then
-      local lc = line.leftColor  or { 1, 1, 1 }
-      local rc = line.rightColor or { 1, 1, 1 }
-      GameTooltip:AddDoubleLine(
+      local lc = line.leftColor  or U.Colors.HIGHLIGHT_WHITE
+      local rc = line.rightColor or U.Colors.HIGHLIGHT_WHITE
+      tip:AddDoubleLine(
         line.left or "", line.right or "",
         lc[1], lc[2], lc[3],
         rc[1], rc[2], rc[3])
     elseif line.text ~= nil then
       local c = line.color
       if c then
-        GameTooltip:AddLine(line.text, c[1], c[2], c[3], true)
+        tip:AddLine(line.text, c[1], c[2], c[3], true)
       else
-        GameTooltip:AddLine(line.text, nil, nil, nil, true)
+        tip:AddLine(line.text, nil, nil, nil, true)
       end
     else
       -- Positional legacy form: { text, r, g, b }
-      GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
+      tip:AddLine(line[1], line[2], line[3], line[4], true)
     end
   end
 end
 
 function UI.AddRichTooltip(frame, header, lines, anchor)
-  frame:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
-    GameTooltip:SetText(header, 1, 1, 1, 1, true)
+  local function Fill(tip)
+    local w = U.Colors.HIGHLIGHT_WHITE
+    tip:SetText(header, w[1], w[2], w[3], 1, true)
     if lines then
       for _, line in ipairs(lines) do
-        AppendRichLine(line)
+        AppendRichLine(tip, line)
       end
     end
+  end
+  fillers[frame] = Fill
+  frame:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
+    Fill(GameTooltip)
     GameTooltip:Show()
   end)
   frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -187,6 +244,9 @@ function UI.AddDynamicTooltip(frame, builder, opts)
   opts = opts or {}
   local anchor = opts.anchor or "ANCHOR_RIGHT"
   local cursorFollow = opts.cursorFollow
+  -- a builder is offered to FillTooltipFor only when its caller vouches that
+  -- it writes nothing but the tooltip it is handed (opts.fillable)
+  fillers[frame] = opts.fillable and builder or nil
 
   frame:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, anchor)
@@ -218,7 +278,8 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
     tooltip:SetOwner(opts.owner, opts.anchor or "ANCHOR_RIGHT")
   end
 
-  local br, bg, bb = 1, 0.82, 0
+  local gold, w = U.Colors.STATUS_GOLD, U.Colors.HIGHLIGHT_WHITE
+  local br, bg, bb = gold[1], gold[2], gold[3]
   if opts.brandColor then
     if type(opts.brandColor) == "string" then
       local r, g, b = U.HexToRGB(opts.brandColor)
@@ -232,7 +293,8 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
     tooltip:SetText(opts.title, br, bg, bb, 1, true)
   end
   if opts.subtitle then
-    tooltip:AddLine(opts.subtitle, 0.7, 0.7, 0.7, true)
+    local g = U.Colors.LABEL_GRAY
+    tooltip:AddLine(opts.subtitle, g[1], g[2], g[3], true)
   end
 
   local body = opts.body
@@ -240,11 +302,11 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
   if type(body) == "table" then
     for _, line in ipairs(body) do
       if type(line) == "string" then
-        tooltip:AddLine(line, 1, 1, 1, true)
+        tooltip:AddLine(line, w[1], w[2], w[3], true)
       elseif type(line) == "table" then
         if line.left ~= nil or line.right ~= nil then
-          local lc = line.leftColor  or { 1, 1, 1 }
-          local rc = line.rightColor or { 1, 1, 1 }
+          local lc = line.leftColor  or w
+          local rc = line.rightColor or w
           tooltip:AddDoubleLine(
             line.left or "", line.right or "",
             lc[1], lc[2], lc[3], rc[1], rc[2], rc[3])
@@ -264,9 +326,9 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
     tooltip:AddLine(" ")
     for _, kb in ipairs(opts.keys) do
       tooltip:AddLine(
-        string.format("|cFFFFD100%s|r|cFF888888:|r %s",
-          kb.key or "", kb.desc or ""),
-        1, 1, 1, true)
+        string.format("%s|cFF888888:|r %s",
+          U.WrapColor(U.Colors.TEXT_GOLD, kb.key or ""), kb.desc or ""),
+        w[1], w[2], w[3], true)
     end
   end
 
@@ -427,118 +489,6 @@ function UI.CreateDropDown(parent, opts)
   if opts.onValueChanged then f.onValueChanged = opts.onValueChanged end
 
   return f
-end
-
----------------------------------------------------------------------------
--- CreateDialogPopup
----------------------------------------------------------------------------
--- opts.name gives the popup a global name and closes it with Escape through
--- UISpecialFrames, which works in combat. Without a name the older OnKeyDown
--- handler is kept for compatibility; it raises ADDON_ACTION_BLOCKED on
--- keystrokes while the popup is open in combat, so name new popups.
--- opts.parent (default UIParent) makes the popup follow that frame's
--- visibility; opts.point (default the parent's CENTER) places it;
--- opts.movable lets the user drag it anywhere on screen.
---
--- The popup is shown when created unless opts.hidden. Optional content and
--- actions, so a caller needs no follow-up wiring:
---   opts.body        text (or a list of paragraphs) in popup.Body, centred
---                    under the title; popup:SetBody(text) sets or replaces it
---   opts.confirmText the confirm label (default "OK")
---   opts.onConfirm   function(popup): the confirm click hides the popup, then
---                    calls it (without it, wire popup.ConfirmButton yourself)
---   opts.cancelText  the cancel label (default "Cancel")
---   opts.hideCancel  no cancel button; the confirm button is centred
---   opts.danger      the title in U.Colors.WARNING_RED, for destructive actions
-local BODY_INSET = 24
-local BODY_TOP = -50          -- below a title at -16
-local BODY_TOP_UNTITLED = -24
-
-function UI.CreateDialogPopup(opts)
-  local popup = CreateFrame("Frame", opts.name, opts.parent or UIParent, "BackdropTemplate")
-  popup:SetSize(opts.width or 320, opts.height or 120)
-  if opts.point then
-    popup:SetPoint(unpack(opts.point))
-  else
-    popup:SetPoint("CENTER")
-  end
-  popup:SetFrameStrata("DIALOG")
-  popup:SetBackdrop(U.Backdrops.DIALOG)
-  local dbg = U.Colors.DIALOG_BG
-  popup:SetBackdropColor(dbg[1], dbg[2], dbg[3], dbg[4])
-  popup:EnableMouse(true)
-  popup:SetToplevel(true)
-
-  if opts.movable then
-    popup:SetMovable(true)
-    popup:SetClampedToScreen(true)
-    popup:RegisterForDrag("LeftButton")
-    popup:SetScript("OnDragStart", popup.StartMoving)
-    popup:SetScript("OnDragStop", popup.StopMovingOrSizing)
-  end
-
-  if opts.title then
-    popup.Title = popup:CreateFontString(nil, "OVERLAY", U.Fonts.TITLE)
-    popup.Title:SetPoint("TOP", 0, -16)
-    popup.Title:SetText(opts.title)
-    if opts.danger then
-      local wr = U.Colors.WARNING_RED
-      popup.Title:SetTextColor(wr[1], wr[2], wr[3])
-    end
-  end
-
-  -- The body FontString is made on first use, so a popup without a body
-  -- has no extra region
-  function popup:SetBody(text)
-    if type(text) == "table" then text = table.concat(text, "\n\n") end
-    if not self.Body then
-      local top = self.Title and BODY_TOP or BODY_TOP_UNTITLED
-      self.Body = self:CreateFontString(nil, "OVERLAY", U.Fonts.BODY)
-      self.Body:SetPoint("TOPLEFT", BODY_INSET, top)
-      self.Body:SetPoint("TOPRIGHT", -BODY_INSET, top)
-      self.Body:SetJustifyH("CENTER")
-    end
-    self.Body:SetText(text or "")
-  end
-  if opts.body ~= nil then popup:SetBody(opts.body) end
-
-  popup.ConfirmButton = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
-  popup.ConfirmButton:SetSize(100, 24)
-  popup.ConfirmButton:SetText(opts.confirmText or "OK")
-  if opts.hideCancel then
-    popup.ConfirmButton:SetPoint("BOTTOM", popup, "BOTTOM", 0, 12)
-  else
-    popup.ConfirmButton:SetPoint("BOTTOMRIGHT", popup, "BOTTOM", -4, 12)
-  end
-  if opts.onConfirm then
-    popup.ConfirmButton:SetScript("OnClick", function()
-      popup:Hide()
-      opts.onConfirm(popup)
-    end)
-  end
-
-  popup.CancelButton = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
-  popup.CancelButton:SetSize(100, 24)
-  popup.CancelButton:SetPoint("BOTTOMLEFT", popup, "BOTTOM", 4, 12)
-  popup.CancelButton:SetText(opts.cancelText or "Cancel")
-  popup.CancelButton:SetScript("OnClick", function() popup:Hide() end)
-  if opts.hideCancel then popup.CancelButton:Hide() end
-
-  if opts.name then
-    tinsert(UISpecialFrames, opts.name)
-  else
-    popup:SetScript("OnKeyDown", function(self, key)
-      if key == "ESCAPE" then
-        self:SetPropagateKeyboardInput(false)
-        self:Hide()
-      else
-        self:SetPropagateKeyboardInput(true)
-      end
-    end)
-  end
-
-  if opts.hidden then popup:Hide() end
-  return popup
 end
 
 ---------------------------------------------------------------------------
@@ -1444,7 +1394,7 @@ end
 --     width = 400, height = 60, point = { ... },
 --     maxLetters = 255, placeholder = "Type a message", fontScale = 1.1,
 --     maxBytes = 255,                       -- optional; a byte limit (eb:SetMaxBytes), and the counter
---                                           --   counts bytes (#text), so an accented letter counts two
+--                                           --   counts bytes (#text): some characters use more than one
 --     showCharCount = true,                 -- default true when maxLetters or maxBytes is set; charCountFont overrides the font
 --     initialValue = ..., validate = function(text) return text ~= "" end,
 --     onCommit = function(text, editBox) end, onChange = function(text, editBox) end,
@@ -1622,7 +1572,7 @@ end
 --                       button whose type is set later (re-aimed in PreClick)
 --   opts.macrotext      for "macro"
 --   opts.item           for "item"
---   opts.blockModified  shift, ctrl and alt clicks run nothing
+--   opts.blockModified  any click with a modifier, alone or combined, runs nothing
 --
 -- CreateClickDelegate(name): a named 1x1 invisible button of type "click",
 -- the target of a macro's "/click <name>" line; aim it with
@@ -1637,9 +1587,12 @@ function UI.ConfigureSecureClicker(button, opts)
   if opts.macrotext then button:SetAttribute("macrotext", opts.macrotext) end
   if opts.item then button:SetAttribute("item", opts.item) end
   if opts.blockModified then
-    button:SetAttribute("shift-type*", "")
-    button:SetAttribute("ctrl-type*", "")
-    button:SetAttribute("alt-type*", "")
+    -- every modifier prefix the secure template builds (SecureButton_GetModifierPrefix,
+    -- 12.1.0): a single-modifier wildcard never matches a combined prefix, so a
+    -- Ctrl+Shift click fell back to the plain "type" and ran (Currency Searcher's review)
+    for _, prefix in ipairs({ "shift-", "ctrl-", "alt-", "ctrl-shift-", "alt-shift-", "alt-ctrl-", "alt-ctrl-shift-" }) do
+      button:SetAttribute(prefix .. "type*", "")
+    end
   end
   return button
 end

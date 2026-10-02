@@ -186,13 +186,15 @@ local DR_BASE_DURATION       = 18
 local ANIMOSITY_EXTENSION    = 5
 local ANIMOSITY_DIMINISHING  = 0.75
 
--- Exposed for the Overlay's verdict-line preview, which must mirror this
--- module's CheckTriggerRanLongEnough / PredictedTriggerEnd / CanStillExtend
--- math. Keeping
--- the constants on the public module means a single edit here propagates
--- to the overlay without cross-file drift.
+-- Exposed for the Overlay's verdict-line preview and the settings window's
+-- timeline, which must mirror this module's CheckTriggerRanLongEnough /
+-- PredictedTriggerEnd / CanStillExtend math. Keeping the constants on the
+-- public module means a single edit here propagates to both without
+-- cross-file drift.
 Watcher.THRESHOLD_BUFFER = THRESHOLD_BUFFER
 Watcher.DR_BASE_DURATION = DR_BASE_DURATION
+Watcher.ANIMOSITY_EXTENSION = ANIMOSITY_EXTENSION
+Watcher.ANIMOSITY_DIMINISHING = ANIMOSITY_DIMINISHING
 Watcher.EMPOWER_LATENCY_GRACE = EMPOWER_LATENCY_GRACE
 
 ---------------------------------------------------------------------------
@@ -309,8 +311,22 @@ end
 -- empower formula hasn't produced a value yet (shouldn't happen since
 -- OnTriggerCast sets expectedTriggerEnd at cast time, but defend anyway).
 ---------------------------------------------------------------------------
+-- Talent data that loads late can turn an unknown Animosity reading into a
+-- known miss during a cycle: the extensions counted while it was assumed
+-- never happened, so the prediction drops back to the 18s base. A reading
+-- that turns up talented changes nothing.
+local function DropAssumedExtensions()
+  if not (castTime and expectedTriggerEnd) then return end
+  if expectedTriggerEnd <= castTime + DR_BASE_DURATION then return end
+  local gate = ApexFury.GetTalentGate()
+  if gate and gate.hasAnimosity == false then
+    expectedTriggerEnd = castTime + DR_BASE_DURATION
+  end
+end
+
 local function PredictedTriggerEnd()
   if not castTime then return nil end
+  DropAssumedExtensions()
   return expectedTriggerEnd or (castTime + DR_BASE_DURATION)
 end
 
@@ -674,23 +690,29 @@ end
 -- still gates on linger remaining and trigger duration, so a recovery
 -- past the linger window suppresses cleanly instead of firing late.
 ---------------------------------------------------------------------------
+-- The displayed reason follows the *current* blocker, so the overlay never
+-- names one that has cleared (exited a vehicle into a stun, or combat ended
+-- while mounted)
+local function UpdatePendingReason(reason)
+  if reason ~= pendingDeferReason then
+    Debug.Log("WATCHER", "Pending defer reason updated: %s -> %s",
+      tostring(pendingDeferReason), tostring(reason))
+    pendingDeferReason = reason
+  end
+end
+
 local function TryFirePending(reasonContext)
   if not (alertPending and not alertFired and not alertSuppressed) then return end
 
   if Config.Get(Config.Options.COMBAT_ONLY) and not InCombat() then
+    UpdatePendingReason("ooc")
     return  -- still OOC, keep pending
   end
 
   if Config.Get(Config.Options.ACTIONABILITY_GATE) then
     local canAct, reason = CheckActionability()
     if not canAct then
-      -- Update the displayed reason so overlay reflects the *current*
-      -- blocker (e.g. exited vehicle into a stun).
-      if reason ~= pendingDeferReason then
-        Debug.Log("WATCHER", "Pending defer reason updated: %s -> %s",
-          tostring(pendingDeferReason), tostring(reason))
-        pendingDeferReason = reason
-      end
+      UpdatePendingReason(reason)
       return
     end
   end
@@ -968,6 +990,7 @@ function Watcher.GetState()
   -- combat: Rising Fury's fields are secret values).
   local now = Now()
   stateView.now = now   -- the overlay renders against the same clock
+  DropAssumedExtensions()
   if castTime and expectedTriggerEnd and now >= expectedTriggerEnd then
     stateView.triggerDropTime = expectedTriggerEnd
   else

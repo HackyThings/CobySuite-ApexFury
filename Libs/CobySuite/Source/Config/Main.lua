@@ -3,10 +3,10 @@
 --
 -- Usage:
 --   local config = CobySuite.Config.New({
---     savedVariable = "COBY_SNIPER_CONFIG",
+--     savedVariable = "MYADDON_CONFIG",
 --     options    = { USE_BLEEP = "use_bleep_2", ... },
 --     defaults   = { ["use_bleep_2"] = true, ... },
---     debug      = CobySniper.Debug,       -- optional: for Log/Warn calls
+--     debug      = MyAddon.Debug,          -- optional: for Log/Warn calls
 --     onSet      = function(name, old, new) end,  -- optional: hook after Set
 --     onReset    = function() end,          -- optional: hook after Reset
 --     migrations = function(sv) end,        -- optional: runs during InitializeData

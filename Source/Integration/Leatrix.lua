@@ -49,9 +49,9 @@ end
 -- Public API
 ---------------------------------------------------------------------------
 
--- IsAvailable: true if Leatrix Sounds is loaded (or loadable) right now.
--- Covers three cases: (1) panel already created, (2) addon loaded but
--- panel not yet built, (3) addon enabled-but-on-demand.
+-- IsAvailable: true if Leatrix Sounds is loaded right now: its panel or
+-- global exists, its slash command is registered, or the game reports the
+-- addon loaded. An enabled addon that hasn't loaded yet reads false.
 function Leatrix.IsAvailable()
   if _G["LeaSoundsGlobalPanel"] or _G.Leatrix_Sounds then return true end
   if SlashCmdList and SlashCmdList["Leatrix_Sounds"] then return true end

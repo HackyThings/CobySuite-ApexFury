@@ -4,6 +4,31 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-10-01
+
+### Added
+
+- ApexFury is in the addon list on the minimap: left-click opens the settings, right-click shows or hides the overlay, and its tooltip says whether it's ready on this character.
+
+### Changed
+
+- A new settings window: **Alert**, **Sound** and **Advanced** replace Behavior, Trigger and Sound. Every setting keeps your saved choice.
+- Alert opens on a card showing whether ApexFury is ready on this character, with tiles for Devastation, Rising Fury and Animosity.
+- Pick the stack to alert at from tiles that show when it plays ("+18s"). A timeline shows the predicted time and warns when the alert can't play without Animosity.
+- Plainer names: "Combat-only mode" is now **Hold the alert until I'm in combat**, "Actionability gate" is **Hold the alert until I can act**, "Min linger remaining" is **Skip a held alert with less than** (a slider), and "Verbose debug logging" is **Log every cast for bug reports**.
+- Sound: **Play sample** plays your sound the way the alert will, and the channel is three choices under **Play it on**. A line warns when a game setting mutes the alert. Leatrix's Grab Sound is now **Use the sound I clicked**.
+- Advanced holds the timing numbers (locked until you press **Edit timing overrides**), **Show overlay**, **Open debug log** and verbose logging.
+- Shorter, plainer tooltips in the settings window and on the overlay's lines.
+- Plain words in the sound browser: "Built-in game sound" and "Sound pack". Hold Shift over a sound for its file path or ID.
+- The overlay says in words why an alert was dropped ("DR too short", "Rising Fury ended", "you died").
+- Late talent data no longer suggests a `/reload`: ApexFury checks again on its own.
+
+### Fixed
+
+- The overlay is wider, so long status lines no longer run past its edge.
+- If your talents load late and show no Animosity mid-Dragonrage, an alert that can't land now stays silent.
+- A held alert's overlay line says it is waiting for combat once combat ends, not the vehicle, mount or stun.
+
 ## [1.0.5] - 2026-10-01
 
 ### Added
@@ -72,7 +97,8 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 Initial release of ApexFury.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.6
 [1.0.5]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.5
 [1.0.4]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.4
 [1.0.3]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.3

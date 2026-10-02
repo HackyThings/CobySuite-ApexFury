@@ -6,22 +6,18 @@
 -- system, copy box, auto-scroll, and live log display are all shared.
 --
 -- Consumer addons pass tabs and extra toolbar buttons in opts (tabs,
--- extraToolbarButtons) and can add custom methods (e.g., ResetAllData,
--- WipeAllData) after construction.
+-- extraToolbarButtons) and can add custom methods (for example a
+-- WipeAllData that clears the addon's data) after construction.
 -------------------------------------------------------------------------------
+
+local U = CobySuite_ApexFury.Utilities
+local LOG_VIEW_LINES = 5000   -- the logger's default bufferSize
 
 local LEVEL_COLORS = {
   INFO  = {r = 0.8, g = 0.8, b = 0.8},
   WARN  = {r = 1.0, g = 0.8, b = 0.0},
   STATE = {r = 0.4, g = 0.8, b = 1.0},
   EVENT = {r = 0.6, g = 1.0, b = 0.6},
-}
-
-local DEFAULT_CATEGORY_BACKDROP = {
-  bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-  edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-  tile = true, tileSize = 16, edgeSize = 16,
-  insets = { left = 4, right = 4, top = 4, bottom = 4 },
 }
 
 -------------------------------------------------------------------------------
@@ -34,9 +30,9 @@ function DebugWindowMixin:OnLoad()
   self.TitleText:SetText(self._title)
 
   -- Configure log display
-  self.LogDisplay:SetMaxLines(5000)
+  self.LogDisplay:SetMaxLines(LOG_VIEW_LINES)
   self.LogDisplay:SetFading(false)
-  self.LogDisplay:SetFontObject("GameFontHighlightSmall")
+  self.LogDisplay:SetFontObject(U.Fonts.DATA)
   self.LogDisplay:SetHyperlinksEnabled(false)
   self.LogDisplay:SetJustifyH("LEFT")
   self.LogDisplay:SetInsertMode("BOTTOM")
@@ -66,7 +62,7 @@ function DebugWindowMixin:OnLoad()
 
   -- Auto-scroll checkbox
   self.AutoScrollToggle:SetChecked(true)
-  self.AutoScrollLabel = self.AutoScrollLabel or self:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  self.AutoScrollLabel = self.AutoScrollLabel or self:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
   self.AutoScrollLabel:SetPoint("RIGHT", self.AutoScrollToggle, "LEFT", -2, 0)
   self.AutoScrollLabel:SetText("Auto-scroll")
 
@@ -118,7 +114,8 @@ function DebugWindowMixin:CreateFilterButtons()
       btn.active = not btn.active
       self.levelFilters[level] = btn.active
       if btn.active then
-        btn:GetFontString():SetTextColor(1, 1, 1)
+        local w = U.Colors.HIGHLIGHT_WHITE
+        btn:GetFontString():SetTextColor(w[1], w[2], w[3])
       else
         btn:GetFontString():SetTextColor(0.4, 0.4, 0.4)
       end
@@ -131,7 +128,7 @@ function DebugWindowMixin:CreateFilterButtons()
   xOffset = xOffset + 10
 
   -- Separator
-  local sep = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  local sep = row:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
   sep:SetPoint("LEFT", xOffset, 0)
   sep:SetText("|")
   xOffset = xOffset + 10
@@ -147,7 +144,7 @@ function DebugWindowMixin:CreateFilterButtons()
   end)
   xOffset = xOffset + 84
 
-  -- DIAG quick-filter button (toggles between DIAG-only and all categories)
+  -- DIAG quick-filter button (toggles between DIAG-only and the filters you had before)
   local diagBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   diagBtn:SetSize(50, 18)
   diagBtn:SetPoint("LEFT", xOffset, 0)
@@ -218,7 +215,7 @@ function DebugWindowMixin:ToggleCategoryMenu(anchor)
       cb:SetSize(20, 20)
       cb:SetPoint("TOPLEFT", 8, yOff)
       cb:SetChecked(self.categoryFilters[cat] ~= false)
-      cb.text = cb.text or cb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      cb.text = cb.text or cb:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
       cb.text:SetPoint("LEFT", cb, "RIGHT", 2, 0)
       cb.text:SetText(cat)
 
@@ -366,8 +363,9 @@ function DebugWindowMixin:OnUpdate()
     end
   end
 
+  -- The copy box's Ctrl+C line holds the count's place until Back to Live
   local size = logger.GetBufferSize()
-  if size ~= self.lastBufferSize then
+  if size ~= self.lastBufferSize and not self.CopyScrollFrame:IsShown() then
     self.lastBufferSize = size
     self.EntryCount:SetText(size .. " entries")
   end
@@ -404,6 +402,8 @@ function DebugWindowMixin:ShowCopyBox(text)
   editBox:SetHeight(numLines * (fontHeight + 2) + 20)
   editBox:HighlightText()
   editBox:SetFocus()
+  -- Addons can't write to the clipboard: the text is selected for Ctrl+C
+  self.EntryCount:SetText("Selected: press Ctrl+C to copy")
 end
 
 function DebugWindowMixin:HideCopyBox()
@@ -430,7 +430,7 @@ end
 -- Constructor
 -------------------------------------------------------------------------------
 -- opts:
---   windowName             (string)   global frame name, e.g., "CobySniperDebugWindow"
+--   windowName             (string)   global frame name, e.g., "MyAddonDebugWindow"
 --   title                  (string)   window title text
 --   icon                   (string?)  texture shown left of the title (CreateWindow)
 --   logger                 (table)    logger instance from NewLogger
@@ -441,8 +441,8 @@ end
 --   extraToolbarButtons    (table?)   array of {key?, text, width?, textColor?, side, onClick}
 --                                     side = "left" (after Clear) or "right" (at the right edge, right of Auto-scroll, in array order)
 --                                     onClick receives the window frame
---   diagActiveColor        (table|fn?) {R, G, B} array or function returning same, default {0,1,0}
---   categoryMenuBackdrop   (table|fn?) backdrop table or function returning one
+--   diagActiveColor        (table|fn?) {R, G, B} array or function returning same, default Colors.SUCCESS_GREEN
+--   categoryMenuBackdrop   (table|fn?) backdrop table or function returning one, default Backdrops.MENU
 --   persist                (table?)   saved position and size, CreateWindow's persist:
 --                                     { svTable = table or function returning it,
 --                                       key = "debugWindow" (default), defaults = {...} }.
@@ -461,8 +461,8 @@ function CobySuite_ApexFury.Debug.NewWindow(opts)
   local logger = opts.logger
   local tabs = opts.tabs
   local extraButtons = opts.extraToolbarButtons or {}
-  local diagActiveColor = opts.diagActiveColor or {0, 1, 0}
-  local categoryMenuBackdrop = opts.categoryMenuBackdrop or DEFAULT_CATEGORY_BACKDROP
+  local diagActiveColor = opts.diagActiveColor or U.Colors.SUCCESS_GREEN
+  local categoryMenuBackdrop = opts.categoryMenuBackdrop or U.Backdrops.MENU
 
   local persist
   if opts.persist then
@@ -499,15 +499,28 @@ function CobySuite_ApexFury.Debug.NewWindow(opts)
   f._tabContents = {}
 
   -- EntryCount label
-  f.EntryCount = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  f.EntryCount = f:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
   f.EntryCount:SetJustifyH("LEFT")
   f.EntryCount:SetPoint("TOPLEFT", 70, -28)
 
-  -- Scrolling log display
+  -- Scrolling log display, a whole number of lines high: it fills from the
+  -- bottom, so a height between two line counts cut its top line in half
+  -- (Verify q95-01, 2026-10-01)
   f.LogDisplay = CreateFrame("ScrollingMessageFrame", nil, f)
-  f.LogDisplay:SetPoint("TOPLEFT", 12, -44)
+  f.LogDisplay:SetPoint("BOTTOMLEFT", 12, 70)
   f.LogDisplay:SetPoint("BOTTOMRIGHT", -12, 70)
+  f.LogDisplay:SetHeight(100)
   f.LogDisplay:EnableMouse(true)
+  local function FitLog()
+    local _, size = f.LogDisplay:GetFont()
+    local line = (tonumber(size) or 0) + (tonumber((f.LogDisplay:GetSpacing())) or 0)
+    local room = (f:GetHeight() or 0) - 44 - 70
+    if line <= 0 or room <= line then return end
+    f.LogDisplay:SetHeight(math.floor(room / line) * line)
+  end
+  f:HookScript("OnSizeChanged", FitLog)
+  f:HookScript("OnShow", FitLog)
+  f.FitLog = FitLog
 
   -- Copy overlay scroll frame
   f.CopyScrollFrame = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")

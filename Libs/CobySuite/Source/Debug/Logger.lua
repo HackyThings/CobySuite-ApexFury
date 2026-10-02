@@ -17,6 +17,18 @@ CobySuite_ApexFury.Debug.Levels = {
 
 local Levels = CobySuite_ApexFury.Debug.Levels
 
+-- CobySuite.Debug.SetLineTag(fn): fn() gives a tag ("[test]") or nil; every
+-- logger keeps the tag with each line written while it gives one (entry.tag,
+-- shown before the message). The test framework sets it in development
+-- builds, so lines a suite or a Verify scene writes never pass for the
+-- player's own in their debug log (ApexFury's run 2 review); nothing in a
+-- release sets it.
+local lineTag = nil
+local RECENT_COUNT = 250   -- the debug window's "Copy Last 250"
+function CobySuite_ApexFury.Debug.SetLineTag(fn)
+  lineTag = fn
+end
+
 -------------------------------------------------------------------------------
 -- AppendConfigSnapshot: emits "Config Snapshot:" + sorted key=value pairs
 -- for every non-table entry in the named SavedVariable. Used by consumer
@@ -43,9 +55,9 @@ end
 
 -------------------------------------------------------------------------------
 -- opts:
---   addonName       (string)   "CobySniper" or "CobysLinkepedia"
+--   addonName       (string)   "Recollect" or "CobysLinkepedia"
 --   categories      (table)    {"INIT", "CONFIG", ...}
---   savedVariable   (string)   "COBY_SNIPER_DEBUG_LOG" or "COBYS_LINKEPEDIA_DEBUG_LOG"
+--   savedVariable   (string)   "MYADDON_DEBUG_LOG" or "COBYS_LINKEPEDIA_DEBUG_LOG"
 --   bufferSize      (number?)  max entries, default 5000
 --   sessionHeader   (function?) fn(lines): appends extra lines to the header table
 -------------------------------------------------------------------------------
@@ -88,12 +100,18 @@ function CobySuite_ApexFury.Debug.NewLogger(opts)
     if select("#", ...) > 0 then
       message = string.format(message, ...)
     end
+    local tag
+    if lineTag then
+      local ok, value = pcall(lineTag)
+      if ok and type(value) == "string" and value ~= "" then tag = value end
+    end
 
     buffer[writePos] = {
       timestamp = GetTimestamp(),
       level = level,
       category = category,
       message = message,
+      tag = tag,
     }
 
     writePos = writePos % maxEntries + 1
@@ -183,8 +201,8 @@ function CobySuite_ApexFury.Debug.NewLogger(opts)
   -- Formatting
   ---------------------------------------------------------------------------
   local function FormatEntry(entry)
-    return string.format("[%s] [%s] [%s] %s",
-      entry.timestamp, entry.level, entry.category, entry.message)
+    return string.format("[%s] [%s] [%s] %s%s",
+      entry.timestamp, entry.level, entry.category, entry.tag and (entry.tag .. " ") or "", entry.message)
   end
 
   function logger.FormatEntry(entry)
@@ -238,8 +256,8 @@ function CobySuite_ApexFury.Debug.NewLogger(opts)
 
     local maxCount = nil
     if recentOnly then
-      maxCount = 250
-      table.insert(lines, "Showing: Last 250 entries")
+      maxCount = RECENT_COUNT
+      table.insert(lines, "Showing: Last " .. RECENT_COUNT .. " entries")
     end
 
     table.insert(lines, "")

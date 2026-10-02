@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------
 -- CobySuite.UI.CreateGuideWindow / CreateHelpButton: an addon's feature guide
+-- (also CreateCollapsibleHeader and FOLD_ATLAS, and the What's New window below)
 --
 -- A guide is a window of sections, one per part of the addon. Each section
 -- is a header (icon, title, a one-line summary, and at its right edge the
@@ -58,9 +59,52 @@
 --
 -- The help button is a gold question mark in the title font, 24 px square by
 -- default to match the close button beside it, white under the mouse.
+--
+-- The text helpers (CobySuite.UI.GuideText) give every guide one look:
+-- short bullets that scan at a glance, keys and commands in the slash help's
+-- gold, the addon's own names for its parts in the help's section blue, and
+-- a gray line for a caveat. A section body of bullets is one paragraph:
+--
+--   local T = CobySuite.UI.GuideText
+--   body = {
+--     T.Bullets({
+--       "Hold " .. T.Key("Alt") .. " over an item to see the " .. T.Block("Uses") .. " block.",
+--       T.Icon(134400) .. " Items it can't place show a question mark.",
+--       T.Term(U.Colors.SUCCESS_GREEN, "Keep", "still needed for something"),
+--     }),
+--     T.Note("A caveat, in gray."),
+--   }
+--
+-- Aim for bullets of about 25 words; a longer one is two bullets.
 ---------------------------------------------------------------------------
+
 local UI = CobySuite_ApexFury.UI
 local U = CobySuite_ApexFury.Utilities
+
+---------------------------------------------------------------------------
+-- GuideText: the guide's text helpers (lifted from Recollect's guide)
+---------------------------------------------------------------------------
+local GUIDE_BULLET = "\226\128\162 "
+UI.GuideText = {
+  -- a key or command, in the slash help's gold
+  Key = function(text) return U.WrapColor(U.Colors.HELP_COMMAND, text) end,
+  -- one of the addon's own names for a part of it (a block, a tab), in the help's section blue
+  Block = function(text) return U.WrapColor(U.Colors.HELP_SECTION, text) end,
+  -- a caveat, in gray
+  Note = function(text) return U.WrapColor(U.Colors.LABEL_GRAY, text) end,
+  -- a small icon inside a line (a texture path or file ID), cropped like the section icons
+  Icon = function(texture) return "|T" .. tostring(texture) .. ":16:16:0:0:64:64:5:59:5:59|t" end,
+  -- bulleted lines, one paragraph
+  Bullets = function(lines)
+    local out = {}
+    for i, line in ipairs(lines) do out[i] = GUIDE_BULLET .. line end
+    return table.concat(out, "\n")
+  end,
+  -- a named state in its own color, then what it means ("Keep: still needed")
+  Term = function(color, name, meaning)
+    return U.WrapColor(color or U.Colors.HIGHLIGHT_WHITE, name) .. ": " .. meaning
+  end,
+}
 
 local HEADER_HEIGHT = 46
 local ICON_SIZE = 32
@@ -494,7 +538,7 @@ end
 --                                         -- ran the addon before it had this window (its settings
 --                                         -- were saved before this login): no guide, the version is
 --                                         -- only recorded, and the next update shows What's New
---     combatMessage = function(text) MyAddon.Message(text) end, -- optional: when asked for in combat before it is built
+--     combatMessage = function(text) MyAddon.Message(text) end, -- optional: when asked for in combat before it is built (it opens when combat ends)
 --     onShow = function(what) end,        -- optional: "guide" or "changelog", at login
 --   })
 --   whatsNew:OnLogin()        -- at PLAYER_LOGIN
@@ -606,11 +650,23 @@ function WhatsNewMixin:Build()
   return self.window
 end
 
+-- Asked for in combat before it was ever built, it opens once combat ends
+-- (one wait however often it is asked for)
 function WhatsNewMixin:Toggle()
   local w = self:Build()
   if w then
     w:Toggle()
-  elseif self.opts.combatMessage then
+    return
+  end
+  if not self.openAfterCombat then
+    self.openAfterCombat = true
+    WhatsNew.seams.OnceEvent("PLAYER_REGEN_ENABLED", function()
+      self.openAfterCombat = nil
+      local built = self:Build()
+      if built and not built:IsShown() then built:Show() end
+    end)
+  end
+  if self.opts.combatMessage then
     self.opts.combatMessage("The changelog opens when combat ends.")
   end
 end

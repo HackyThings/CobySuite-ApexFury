@@ -15,6 +15,31 @@ ApexFury.Data = ApexFury.Data or {}
 
 ApexFury.Data.Changelog = {
   {
+    version = "1.0.6",
+    title = "New settings and a minimap entry",
+    date = "2026-10-01",
+    new = {
+      "Minimap: ApexFury in the addon list; click it for settings",
+    },
+    changed = {
+      "Settings: Alert, Sound and Advanced; your choices are kept",
+      "Alert: a card shows whether ApexFury is ready on this character",
+      "Threshold: pick a stack from tiles, with a timeline preview",
+      "Plainer names for the hold, skip and logging options",
+      "Sound: Play sample, and a warning when a game setting mutes it",
+      "Advanced: timing numbers locked until you choose to edit them",
+      "Tooltips: shorter and plainer in settings and on the overlay",
+      "Sound browser: plain words; hold Shift for a sound's path or ID",
+      "Overlay: says in words why an alert was dropped",
+      "Late talent data: checked again on its own, no reload needed",
+    },
+    fixed = {
+      "Overlay: wider, so long lines stay inside it",
+      "Late talents mid-Dragonrage: an alert that can't land stays silent",
+      "Held alerts: the overlay says it waits for combat once combat ends",
+    },
+  },
+  {
     version = "1.0.5",
     title = "Guide and What's New",
     date = "2026-10-01",

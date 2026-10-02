@@ -22,13 +22,13 @@ local U = CobySuite_ApexFury.Utilities
 local UI = CobySuite_ApexFury.UI
 
 local LINE_TOOLTIPS = {
-  [1] = "Tracking state. Counts down to alert fire while DR is active. PENDING = the alert moment came while you couldn't act on it (out of combat, in a vehicle, mounted, possessed, or stunned or otherwise crowd-controlled); the line names which. When that clears, the alert is checked again and plays only if its other conditions still pass. EXPIRED = a pending alert whose Rising Fury ran out first. HOLD = at the alert moment Dragonrage looked too short, so the alert waits half a second for an empower that arrives late. fired/suppressed/idle resolve once the cycle completes.",
-  [2] = "Time remaining for Dragonrage (or the Rising Fury linger after DR drops). (read) = Dragonrage's own timer, read once out of combat just after the cast and after each empower. Otherwise, and always in combat: estimated via the predictive model from cast time + Animosity empower extensions.",
-  [3] = "Empower spells (Fire Breath / Eternity Surge) cast since this Dragonrage, the Rising Fury stacks reached so far, and in brackets the stacks projected for the moment DR drops (it grows as empowers extend DR). Each empower extends DR via Animosity (+5s, 25% diminishing per cast).",
-  [4] = "Exact elapsed seconds from the Dragonrage cast to when the alert sound played (or was suppressed). Frozen at the moment of resolution.",
-  [5] = "How long ago the most recent alert sound played. Useful for verifying the cadence between Dragonrages.",
-  [6] = "Current verdict: what the watcher would do if the alert moment hit RIGHT NOW. Shows which gates would pass/fail (Rising Fury alive, DR duration ≥ threshold requirement, linger ≥ min_remaining). Helps explain unexpected suppressions.",
-  [7] = "Talent gate: addon prerequisites. Requires Devastation Evoker spec + Rising Fury rank ≥1. Animosity needed for threshold ≥4 (unextended Dragonrage caps at 3 stacks). When inactive, the watcher unregisters its events entirely.",
+  [1] = "Counts down to the alert. PENDING: the moment came when you couldn't act on it (out of combat, a vehicle, mounted, possessed or crowd-controlled; the line says which), and it plays once that clears if its other checks pass. EXPIRED: Rising Fury ran out first. HOLD: Dragonrage looked too short, so it waits half a second for a late empower.",
+  [2] = "Dragonrage time left, then Rising Fury's linger. (read) is the game's own timer, taken out of combat after the cast and each empower, and kept until it ends or you cast an empower. Everything else is ApexFury's estimate.",
+  [3] = "Empowers cast this Dragonrage, Rising Fury stacks so far, and in brackets the stacks expected when it ends. With Animosity each empower extends Dragonrage, so that number can grow.",
+  [4] = "Seconds from the Dragonrage cast to the alert sound, or to the moment the alert was dropped, and why. It stays put once decided.",
+  [5] = "How long ago the last alert sound played.",
+  [6] = "Whether the alert's timing checks pass right now, or what stops it: Dragonrage too short, Rising Fury over, or less left than your skip setting. The combat and can-act holds are checked when the moment comes.",
+  [7] = "Talent check. ApexFury needs a Devastation Evoker with Rising Fury. Without Animosity, Dragonrage stops at 3 stacks, so set the threshold to 3 or lower.",
 }
 
 local NUM_LINES = 7
@@ -44,6 +44,22 @@ local DEFER_REASON_DISPLAY = {
   loss_of_control = { status = "stunned/CC'd",        verdict = "awaiting CC end" },
 }
 local DEFER_FALLBACK = { status = "waiting", verdict = "awaiting recovery" }
+
+-- Suppress reason (the watcher's lastSuppressReason) -> the short words the
+-- overlay shows on lines 1, 4 and 6. An unknown reason shows as it is.
+local SUPPRESS_REASON_DISPLAY = {
+  disabled          = "alerts off",
+  trigger_too_short = "DR too short",
+  linger_expired    = "Rising Fury ended",
+  rf_too_short      = "Rising Fury low",
+  rf_expired        = "Rising Fury ended",
+  death             = "you died",
+  zone              = "zone change",
+}
+
+local function SuppressReasonText(reason)
+  return SUPPRESS_REASON_DISPLAY[reason] or tostring(reason or "?")
+end
 
 ---------------------------------------------------------------------------
 -- Render line 7: the talent gate status. Always shown.
@@ -66,7 +82,7 @@ local function RenderGateLine(state)
   elseif reason == "wrong_class" then
     lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Cwrong class|r")
   elseif reason == "api_unavailable" then
-    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Ctalents not loaded|r |cFF555555(change talents or /reload)|r")
+    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Ctalents not loaded|r |cFF555555(change talents or zone)|r")
   else
     lines[7]:SetText("|cFFCCCCCCGate:|r |cFF888888" .. tostring(detail) .. "|r")
   end
@@ -131,7 +147,7 @@ local function UpdateDisplay()
   elseif state.alertSuppressed and state.lastSuppressReason then
     lines[1]:SetText(string.format(
       "|cFFCCCCCCStatus:|r |cFFFF8800suppressed (%s)|r",
-      state.lastSuppressReason))
+      SuppressReasonText(state.lastSuppressReason)))
   elseif state.alertFired and state.castTime and (now - state.castTime) < 30 then
     lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF00FF00fired|r")
   else
@@ -183,7 +199,7 @@ local function UpdateDisplay()
   elseif state.lastSuppressOffset then
     lines[4]:SetText(string.format(
       "|cFFCCCCCCFired after:|r |cFFFF8800suppressed @ %.3fs|r |cFF555555(%s)|r",
-      state.lastSuppressOffset, tostring(state.lastSuppressReason or "?")))
+      state.lastSuppressOffset, SuppressReasonText(state.lastSuppressReason)))
   elseif state.castTime and not state.alertFired then
     -- Live elapsed since cast (counting up toward scheduled fire)
     local elapsed = now - state.castTime
@@ -218,7 +234,7 @@ local function UpdateDisplay()
   elseif state.alertSuppressed then
     lines[6]:SetText(string.format(
       "|cFFCCCCCCVerdict:|r |cFFFF8800SUPPRESSED|r |cFF555555(%s)|r",
-      tostring(state.lastSuppressReason or "?")))
+      SuppressReasonText(state.lastSuppressReason)))
   elseif state.provisionalUntil then
     lines[6]:SetText(
       "|cFFCCCCCCVerdict:|r |cFFFFAA00hold, waiting for a late empower|r")
@@ -262,7 +278,7 @@ local function UpdateDisplay()
         "|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger %.1fs < %.1fs|r",
         rem, minRem))
     else
-      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF00FF00WOULD FIRE|r |cFF555555(all gates pass)|r")
+      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF00FF00TIMING OK|r |cFF555555(holds checked when it comes)|r")
     end
   end
 
@@ -302,7 +318,9 @@ local function BuildFrame()
   local f = UI.CreateWindow({
     name       = "ApexFuryOverlay",
     title      = ApexFury.WrapBrand("ApexFury"),
-    width      = 290,
+    -- wide enough for the longest line, "Status: PENDING: stunned/CC'd
+    -- (13.0s since cast)" (cut off at 290, Verify q94-02, 2026-10-01)
+    width      = 340,
     height     = 34 + NUM_LINES * 22 + 12,
     strata     = "MEDIUM",
     toplevel   = false,
@@ -326,6 +344,10 @@ local function BuildFrame()
   for i = 1, NUM_LINES do
     local line = f:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
     line:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -34 - (i - 1) * 22)
+    -- held inside the frame: a longer line ends in "..." instead of
+    -- running past the edge
+    line:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+    line:SetWordWrap(false)
     line:SetJustifyH("LEFT")
     line:SetText("...")
     if LINE_TOOLTIPS[i] then
@@ -377,7 +399,7 @@ function Overlay.RestoreFromSavedVar()
 end
 
 -- Built hidden now: the overlay is there to be watched in combat, and a
--- first /af overlay, the settings window's Overlay button or a restore after
+-- first /af overlay, the settings window's Show overlay button or a restore after
 -- a /reload can all come mid-fight. Its OnUpdate only runs while it shows.
 BuildFrame()
 
@@ -387,4 +409,6 @@ Overlay._test = {
   GetLineText = function(i)
     return lines[i] and lines[i]:GetText() or nil
   end,
+  -- A line's FontString, for the Verify tooltip grid (its UI.AddTooltip filler)
+  GetLine = function(i) return lines[i] end,
 }

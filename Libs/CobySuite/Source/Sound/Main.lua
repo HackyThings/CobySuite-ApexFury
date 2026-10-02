@@ -532,11 +532,11 @@ function Sound.Resolve(value)
   local lsmName = value:match("^lsm:(.+)$")
   if lsmName then
     local LSM = GetLSM()
-    if not LSM then return "lsm_missing", lsmName, ("LSM (unavailable): %s"):format(lsmName) end
+    if not LSM then return "lsm_missing", lsmName, ("Shared media (not loaded): %s"):format(lsmName) end
     -- noDefault: without it LSM hands back its default sound for a name it
     -- does not have, and a removed pack would look like a valid choice
     local path = LSM:Fetch("sound", lsmName, true)
-    if not path then return "lsm_missing", lsmName, ("LSM (unknown): %s"):format(lsmName) end
+    if not path then return "lsm_missing", lsmName, ("Shared media: %s"):format(lsmName) end
     return "lsm", path, lsmName
   end
 
