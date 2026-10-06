@@ -196,9 +196,13 @@ function UI.AddSpellTooltip(frame, spellIDOrFunc, anchor)
   frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
+-- A line with no color of its own is white, given explicitly: a tooltip line
+-- added with no color keeps whatever color that line last had, so a reused
+-- tooltip (GameTooltip, Verify's pooled tips) showed some bodies gold (Task #239)
 local function AppendRichLine(tip, line)
+  local w = U.Colors.HIGHLIGHT_WHITE
   if type(line) == "string" then
-    tip:AddLine(line, nil, nil, nil, true)
+    tip:AddLine(line, w[1], w[2], w[3], true)
   elseif type(line) == "table" then
     if line.left ~= nil or line.right ~= nil then
       local lc = line.leftColor  or U.Colors.HIGHLIGHT_WHITE
@@ -209,14 +213,11 @@ local function AppendRichLine(tip, line)
         rc[1], rc[2], rc[3])
     elseif line.text ~= nil then
       local c = line.color
-      if c then
-        tip:AddLine(line.text, c[1], c[2], c[3], true)
-      else
-        tip:AddLine(line.text, nil, nil, nil, true)
-      end
+      c = c or w
+      tip:AddLine(line.text, c[1], c[2], c[3], true)
     else
       -- Positional legacy form: { text, r, g, b }
-      tip:AddLine(line[1], line[2], line[3], line[4], true)
+      tip:AddLine(line[1], line[2] or w[1], line[3] or w[2], line[4] or w[3], true)
     end
   end
 end
@@ -312,11 +313,8 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
             lc[1], lc[2], lc[3], rc[1], rc[2], rc[3])
         elseif line.text ~= nil then
           local c = line.color
-          if c then
-            tooltip:AddLine(line.text, c[1], c[2], c[3], true)
-          else
-            tooltip:AddLine(line.text, nil, nil, nil, true)
-          end
+          c = c or w
+          tooltip:AddLine(line.text, c[1], c[2], c[3], true)
         end
       end
     end
@@ -1008,7 +1006,6 @@ function UI.CreateIconButton(parent, opts)
       tex:SetVertexColor(opts.vertexColor[1], opts.vertexColor[2],
                          opts.vertexColor[3], opts.vertexColor[4])
     end
-    btn._tex = tex
   end
 
   if opts.highlightAtlas then

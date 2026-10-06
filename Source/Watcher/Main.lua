@@ -109,6 +109,7 @@ local inFlightEmpower       -- spellID of an empower channel with EMPOWER_START
 local expectedTriggerEnd    -- predicted absolute time the trigger buff will
                             -- end. Drives every in-combat timing decision.
 local alertFired            -- bool: sound has been played
+local soundFailed           -- bool: this cycle's sound and its retry both failed to play
 local alertPending          -- bool: alert moment reached but deferred (out of combat or unable to act)
 local alertSuppressed       -- bool: alert was cancelled
 local lastFiredTime         -- last time alert actually played sound
@@ -197,6 +198,15 @@ Watcher.ANIMOSITY_EXTENSION = ANIMOSITY_EXTENSION
 Watcher.ANIMOSITY_DIMINISHING = ANIMOSITY_DIMINISHING
 Watcher.EMPOWER_LATENCY_GRACE = EMPOWER_LATENCY_GRACE
 
+-- The stacks every Dragonrage reaches without an extension (no Animosity):
+-- 3 at the default 6s interval. interval: the seconds between stacks, or nil
+-- for the saved one. For the chat lines, the overlay and the settings window.
+function Watcher.StacksWithoutExtension(interval)
+  interval = interval or Config.Get(Config.Options.STACK_INTERVAL)
+  if type(interval) ~= "number" or interval <= 0 then return 1 end
+  return math.floor((DR_BASE_DURATION - THRESHOLD_BUFFER) / interval) + 1
+end
+
 ---------------------------------------------------------------------------
 -- Clock, timers, combat and actionability state and the aura reader, each
 -- swappable by the test suite through Watcher._test and resolved at call
@@ -261,6 +271,7 @@ local function ResetState()
   inFlightEmpower = nil
   expectedTriggerEnd = nil
   alertFired = false
+  soundFailed = false
   alertPending = false
   alertSuppressed = false
   lastSuppressReason = nil
@@ -306,11 +317,6 @@ local function ComputeExpectedTriggerEnd()
 end
 
 ---------------------------------------------------------------------------
--- The "predicted DR end" used everywhere downstream. Always returns a
--- valid number when castTime is set; falls back to base 18s if the
--- empower formula hasn't produced a value yet (shouldn't happen since
--- OnTriggerCast sets expectedTriggerEnd at cast time, but defend anyway).
----------------------------------------------------------------------------
 -- Talent data that loads late can turn an unknown Animosity reading into a
 -- known miss during a cycle: the extensions counted while it was assumed
 -- never happened, so the prediction drops back to the 18s base. A reading
@@ -324,6 +330,12 @@ local function DropAssumedExtensions()
   end
 end
 
+---------------------------------------------------------------------------
+-- The "predicted DR end" used everywhere downstream. Always returns a
+-- valid number when castTime is set; falls back to base 18s if the
+-- empower formula hasn't produced a value yet (shouldn't happen since
+-- OnTriggerCast sets expectedTriggerEnd at cast time, but defend anyway).
+---------------------------------------------------------------------------
 local function PredictedTriggerEnd()
   if not castTime then return nil end
   DropAssumedExtensions()
@@ -574,11 +586,14 @@ local function FireAlert(reasonContext, settling)
     Debug.Warn("WATCHER",
       "Sound dispatch returned willPlay=%s handle=%s: retrying in 50ms (mixer likely saturated)",
       tostring(willPlay), tostring(handle))
+    local cycleCast = castTime
     After(0.05, function()
       local h2, wp2 = ApexFury.Sound.Play(soundValue, soundChannel)
       if wp2 and h2 then
         Debug.Log("WATCHER", "Sound retry succeeded")
       else
+        -- the overlay says so; a newer cycle keeps its own outcome
+        if castTime == cycleCast then soundFailed = true end
         Debug.Warn("WATCHER",
           "Sound retry also failed (willPlay=%s handle=%s): alert was inaudible",
           tostring(wp2), tostring(h2))
@@ -980,13 +995,14 @@ function Watcher.GetState()
   stateView.castTime           = castTime
   stateView.alertScheduledFor  = alertScheduledFor
   stateView.alertFired         = alertFired
+  stateView.soundFailed        = soundFailed
   stateView.alertPending       = alertPending
   stateView.alertSuppressed    = alertSuppressed
   -- triggerDropTime: derived from the predictive Animosity model. Reads
   -- as nil while Dragonrage is predicted to still be active, and as the
   -- predicted end timestamp once `now` has passed it. The overlay treats
   -- non-nil triggerDropTime as "linger phase started," which lines up
-  -- with the new predicted-only design (we never observe a real drop in
+  -- with the predicted-only design (we never observe a real drop in
   -- combat: Rising Fury's fields are secret values).
   local now = Now()
   stateView.now = now   -- the overlay renders against the same clock

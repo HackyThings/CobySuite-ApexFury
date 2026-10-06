@@ -49,13 +49,15 @@
 --   client while the drag keeps growing it, so it ran away to its largest
 --   size with its grip off the screen (the curator console, 2026-09-30).
 --   f:SaveState()      f:RestoreState()      f:FitToBounds()      f:Toggle()
+--   CobySuite.UI.IsSuiteWindow(frame)   true for a frame this built
 --
 -- Escape: UISpecialFrames is the standard path (CloseSpecialWindows calls
 -- Hide() directly, so it works in combat). The OnKeyDown +
 -- SetPropagateKeyboardInput handler is deliberately not offered: it raises
 -- ADDON_ACTION_BLOCKED on every keystroke while the window is open in
--- combat (ApexFury, 2026-04). UISpecialFrames itself is still on watch as a
--- possible taint vector, so it stays opt-in.
+-- combat (ApexFury, 2026-04). UISpecialFrames itself was once suspected of
+-- taint and never confirmed (the taint rules, pitfall 4); a window opts in
+-- with escapeCloses.
 --
 -- Close button: BasicFrameTemplate's default routes through HideUIPanel,
 -- which silently no-ops in combat; the override is a plain Hide().
@@ -126,9 +128,19 @@ function WindowMixin:Toggle()
   end
 end
 
+-- Every window this factory built (weak keys): UI.IsSuiteWindow(frame)
+-- names a frame as one of the suite's own, which the development tools
+-- may lay out for a screenshot and put back
+local built = setmetatable({}, { __mode = "k" })
+
+function UI.IsSuiteWindow(frame)
+  return frame ~= nil and built[frame] == true
+end
+
 function UI.CreateWindow(opts)
   opts = opts or {}
   local f = CreateFrame("Frame", opts.name, opts.parent or UIParent, opts.template or "BasicFrameTemplateWithInset")
+  built[f] = true
   if opts.mixin then Mixin(f, opts.mixin) end
   Mixin(f, WindowMixin)
 

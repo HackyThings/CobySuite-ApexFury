@@ -15,6 +15,15 @@ local ADDON_NAME = "ApexFury"
 local VERSION = C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.1.0"
 ApexFury.VERSION = VERSION
 
+local U = CobySuite_ApexFury.Utilities
+
+-- Text colors from the shared palette
+local TXT_GREEN = "|cFF" .. U.Colors.TEXT_GREEN
+local TXT_ORANGE = "|cFF" .. U.Colors.TEXT_ORANGE
+local TXT_YELLOW = "|cFF" .. U.Colors.TEXT_YELLOW
+local TXT_WHITE = "|cFF" .. U.ColorToHex(U.Colors.HIGHLIGHT_WHITE)
+local TXT_GRAY = "|cFF" .. U.ColorToHex(U.Colors.DISABLED_GRAY)
+
 -------------------------------------------------------------------------------
 -- Shared branding + namespace helpers
 -------------------------------------------------------------------------------
@@ -83,31 +92,32 @@ local function PrintStatus()
   if gate then
     if gate.usable then
       if gate.hasAnimosity then
-        Message("  Talent gate: |cFF00FF00ready|r |cFF888888(RF rank " ..
+        Message("  Talent gate: " .. TXT_GREEN .. "ready|r |cFF888888(Rising Fury rank " ..
           tostring(gate.risingFuryRank) .. ", Animosity on)|r")
       elseif gate.hasAnimosity == nil then
-        Message("  Talent gate: |cFF00FF00ready|r |cFF888888(RF rank " ..
+        Message("  Talent gate: " .. TXT_GREEN .. "ready|r |cFF888888(Rising Fury rank " ..
           tostring(gate.risingFuryRank) .. ", Animosity not found yet, assumed on)|r")
       else
-        Message("  Talent gate: |cFFFFAA00active, max 3 stacks|r |cFF888888(no Animosity)|r")
+        Message(string.format("  Talent gate: |cFFFFAA00active, up to %d stacks|r |cFF888888(no Animosity)|r",
+          ApexFury.Watcher.StacksWithoutExtension()))
       end
     else
-      Message("  Talent gate: |cFFFF8800inactive|r: " .. (gate.detail or gate.reason or "?"))
+      Message("  Talent gate: " .. TXT_ORANGE .. "inactive|r: " .. (gate.detail or gate.reason or "?"))
     end
   end
-  Message("  Alerts: " .. (enabled and "|cFF00FF00yes|r" or "|cFFFF4C4Cno|r"))
-  Message("  Verbose: " .. (Config.Get(Config.Options.VERBOSE) and "|cFF00FF00on|r" or "|cFF888888off|r"))
-  Message("  Starts the timer: spell |cFFFFFFFF" .. tostring(spellID) .. "|r (cast event)")
-  Message("  Alert at stack: |cFFFFFFFF" .. tostring(threshold) .. "|r")
-  Message("  Seconds between stacks: |cFFFFFFFF" .. tostring(interval) .. "s|r")
-  Message(string.format("  → Timer fires at |cFF00FF00%.0fs|r |cFF888888(suppress unless trigger duration >= %.1fs)|r",
+  Message("  Alerts: " .. (enabled and TXT_GREEN .. "yes|r" or "|cFFFF4C4Cno|r"))
+  Message("  Verbose: " .. (Config.Get(Config.Options.VERBOSE) and TXT_GREEN .. "on|r" or "|cFF888888off|r"))
+  Message("  Starts the timer: spell " .. TXT_WHITE .. tostring(spellID) .. "|r (cast event)")
+  Message("  Alert at stack: " .. TXT_WHITE .. tostring(threshold) .. "|r")
+  Message("  Seconds between stacks: " .. TXT_WHITE .. tostring(interval) .. "s|r")
+  Message(string.format("  Timer fires at " .. TXT_GREEN .. "%.0fs|r |cFF888888(the alert is skipped unless Dragonrage lasts at least %.1fs)|r",
     fireDelay, minDuration))
-  Message("  Hold until in combat: " .. (Config.Get(Config.Options.COMBAT_ONLY) and "|cFF00FF00yes|r (defer if not in combat)" or "|cFFFFFF00no|r (fire any time)"))
-  Message("  Hold until you can act: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and "|cFF00FF00yes|r (defer in vehicle/mount/CC/possession)" or "|cFFFFFF00no|r (fire regardless of player state)"))
-  Message("  Skip a held alert with less than: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MIN_REMAINING)) .. "s|r of Rising Fury left")
-  Message("  Linger model: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_PER_STACK)) .. "s/stack|r, max |cFFFFFFFF" .. tostring(Config.Get(Config.Options.LINGER_MAX)) .. "s|r, |cFFFFFFFF" .. tostring(Config.Get(Config.Options.MAX_STACKS)) .. "|r max stacks")
-  Message("  Sound ID: |cFFFFFFFF" .. tostring(soundID) .. "|r")
-  Message("  Audio channel: |cFFFFFFFF" .. tostring(Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog") .. "|r")
+  Message("  Hold until in combat: " .. (Config.Get(Config.Options.COMBAT_ONLY) and TXT_GREEN .. "yes|r (defer if not in combat)" or TXT_YELLOW .. "no|r (fire any time)"))
+  Message("  Hold until you can act: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and TXT_GREEN .. "yes|r (defer in vehicle/mount/CC/possession)" or TXT_YELLOW .. "no|r (fire regardless of player state)"))
+  Message("  Skip a held alert with less than: " .. TXT_WHITE .. tostring(Config.Get(Config.Options.MIN_REMAINING)) .. "s|r of Rising Fury left")
+  Message("  Linger model: " .. TXT_WHITE .. tostring(Config.Get(Config.Options.LINGER_PER_STACK)) .. "s/stack|r, max " .. TXT_WHITE .. tostring(Config.Get(Config.Options.LINGER_MAX)) .. "s|r, " .. TXT_WHITE .. tostring(Config.Get(Config.Options.MAX_STACKS)) .. "|r max stacks")
+  Message("  Sound ID: " .. TXT_WHITE .. tostring(soundID) .. "|r")
+  Message("  Audio channel: " .. TXT_WHITE .. tostring(Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog") .. "|r")
 end
 
 local function ScanBuffs(rest)
@@ -130,7 +140,7 @@ local function ScanBuffs(rest)
         if filter ~= "" and not nameLower:find(filter, 1, true) then return false end
         local spellId = tonumber(a.spellId) or 0
         local stacks = tonumber(a.applications) or 0
-        Message(string.format("  [%d] |cFFFFFFFF%s|r: id=|cFFFFFF00%d|r, stacks=|cFF00FF00%d|r",
+        Message(string.format("  [%d] " .. TXT_WHITE .. "%s|r: id=" .. TXT_YELLOW .. "%d|r, stacks=" .. TXT_GREEN .. "%d|r",
           i, name, spellId, stacks))
         return true
       end)
@@ -142,7 +152,7 @@ local function ScanBuffs(rest)
     end
   end
   if restricted then
-    Message("  |cFFFF8800Aura data is hidden right now (combat, encounter, Mythic+, or PvP). Try again outside.|r")
+    Message("  " .. TXT_ORANGE .. "Aura data is hidden right now (combat, encounter, Mythic+, or PvP). Try again outside.|r")
   elseif matched == 0 and hidden == 0 then
     Message("  (no matching buffs)")
   elseif hidden > 0 then
@@ -155,13 +165,13 @@ local function SetChannel(rest)
   local arg = (rest or ""):lower():trim()
   if arg == "" then
     local cur = Config.Get(Config.Options.SOUND_CHANNEL) or "Dialog"
-    Message(string.format("Audio channel: |cFFFFFFFF%s|r. Use |cFFFFFFFF/af channel dialog|master|sfx|r to change.", cur))
+    Message(string.format("Audio channel: " .. TXT_WHITE .. "%s|r. Use " .. TXT_WHITE .. "/af channel dialog|master|sfx|r to change.", cur))
   elseif ApexFury.SOUND_CHANNEL_ALIASES[arg] then
     local channel = ApexFury.SOUND_CHANNEL_ALIASES[arg]
     Config.Set(Config.Options.SOUND_CHANNEL, channel)
-    Message("Audio channel set to |cFFFFFFFF" .. channel .. "|r.")
+    Message("Audio channel set to " .. TXT_WHITE .. channel .. "|r.")
   else
-    Message("Unknown channel '" .. arg .. "'. Valid: |cFFFFFFFFdialog|master|sfx|r.")
+    Message("Unknown channel '" .. arg .. "'. Valid: " .. TXT_WHITE .. "dialog|master|sfx|r.")
   end
 end
 
@@ -195,7 +205,7 @@ CobySuite_ApexFury.Slash.Register({
   version  = VERSION,
   message  = Message,
   onEmpty  = ToggleSettings,   -- bare /af opens the settings window (most common entry point)
-  footer   = { "|cFF808080(Every other setting is in the settings window: /af)|r" },
+  footer   = { TXT_GRAY .. "(Every other setting is in the settings window: /af)|r" },
   commands = CobySuite_ApexFury.Slash.StandardCommands({
     settings  = ToggleSettings,
     guide     = ToggleGuide,
@@ -254,8 +264,8 @@ startupFrame:SetScript("OnEvent", function(_, event, arg1)
     if not APEX_FURY_UI_STATE.sawChannelHint then
       APEX_FURY_UI_STATE.sawChannelHint = true
       Message("Alerts play on the |cFFFFD200Dialog|r audio channel for best isolation in combat. "
-        .. "If you can't hear them, raise |cFFFFFFFFAudio > Dialog Volume|r in WoW settings, "
-        .. "or run |cFFFFFFFF/af channel master|r to switch.")
+        .. "If you can't hear them, raise " .. TXT_WHITE .. "Audio > Dialog Volume|r in WoW settings, "
+        .. "or run " .. TXT_WHITE .. "/af channel master|r to switch.")
     end
 
     ApexFury.Debug.Log("INIT", "PLAYER_LOGIN: watcher started, talent gate armed")

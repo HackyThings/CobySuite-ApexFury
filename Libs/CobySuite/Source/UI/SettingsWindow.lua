@@ -5,7 +5,7 @@
 -- categories (left out when there is only one), a scrolling panel per
 -- category with gold section headers over thin dividers, labels on the left
 -- and inputs aligned on the right, grey description lines, and a bottom bar
--- with Defaults on the left and Apply and Cancel on the right.
+-- with Defaults on the left and Apply and Undo edits on the right.
 --
 -- Edits are staged. Apply writes every staged value through Config.Set in
 -- one go; Cancel, closing the window and opening it again all drop them.
@@ -147,7 +147,8 @@
 --                     icon/atlas, action = { text, onClick(window) } }
 --   panel:Bullets{ items = { { title, lines = { ... }, icon/atlas } } or function(window), maxItems }
 --   panel:Preview{ caption (live), text (live) and color (live), or height, build(frame, window) and
---                  refresh(frame, window); ticker (seconds), dimWhen(get), action = { text, onClick(window) } }
+--                  refresh(frame, window); ticker (seconds), dimWhen(get), action = { text, onClick(window) },
+--                  font (default the chat font; U.Fonts.BODY for an example that is not a chat line) }
 --     caption = "Example" for a passive example; action for "Play sample", "Send test to myself"
 --   panel:Value{ label, value (live), events = { ... } }   -- read-only label and value
 --   panel:Meter{ label, value (live), max (live), warnAt (0.75), format(used, max) }
@@ -168,7 +169,8 @@
 --                     -- its own change with window:StageEdit (no repaint)
 --   window:StageValue(key, value) ... window:Populate(window.getter)
 --                                      -- stages several keys, then repaints once (a "restore these" button)
---   window:HasEdits()  -- a staged value, or an Input being typed in
+--   window:HasEdits()  -- a staged value, an Input being typed in, or a changed draft that is not valid (Cancel's)
+--   window:HasApplicable()  -- a staged value or an Input being typed in (Apply's)
 --   window:Toggle()   window:Open()   window:SelectCategory(key)
 --   window:NotifyConfigChanged(key)   -- for an addon with no config event (nil: every setting)
 --   window:Refresh()                   -- something shown changed outside the config (a count, a status);
@@ -319,26 +321,38 @@ end
 ---------------------------------------------------------------------------
 -- Scroll indicator: a thin track and a draggable thumb beside a panel
 ---------------------------------------------------------------------------
+-- The bar is drawn SCROLL_BAR_W wide at the right; its track and thumb take
+-- the mouse across the whole SCROLLBAR_ROOM gutter the controls leave free
+-- (a 6-pixel target was hard to grab: Task #239)
+local SCROLL_BAR_W = 6
+
 local function AddScrollIndicator(scroll)
   local track = CreateFrame("Frame", nil, scroll)
-  track:SetWidth(6)
+  track:SetWidth(SCROLLBAR_ROOM)
   track:SetPoint("TOPRIGHT", 0, -2)
   track:SetPoint("BOTTOMRIGHT", 0, 2)
   track:SetFrameLevel(scroll:GetFrameLevel() + 10)
 
   local trackBg = track:CreateTexture(nil, "BACKGROUND")
-  trackBg:SetAllPoints()
+  trackBg:SetPoint("TOPRIGHT")
+  trackBg:SetPoint("BOTTOMRIGHT")
+  trackBg:SetWidth(SCROLL_BAR_W)
   local bar = U.Colors.BAR_BG
   trackBg:SetColorTexture(bar[1], bar[2], bar[3], 0.3)
 
   local thumb = CreateFrame("Button", nil, track)
-  thumb:SetWidth(6)
+  thumb:SetWidth(SCROLLBAR_ROOM)
   local thumbTex = thumb:CreateTexture(nil, "ARTWORK")
-  thumbTex:SetAllPoints()
+  thumbTex:SetPoint("TOPRIGHT")
+  thumbTex:SetPoint("BOTTOMRIGHT")
+  thumbTex:SetWidth(SCROLL_BAR_W)
   local gray = U.Colors.DISABLED_GRAY
   thumbTex:SetColorTexture(gray[1], gray[2], gray[3], 0.6)
+  -- the hover brightens the drawn bar only, not the whole gutter
   local light = U.Colors.LIGHT_GRAY
-  UI.AddHoverHighlight(thumb, { light[1], light[2], light[3], 0.3 })
+  local thumbHover = thumb:CreateTexture(nil, "HIGHLIGHT")
+  thumbHover:SetAllPoints(thumbTex)
+  thumbHover:SetColorTexture(light[1], light[2], light[3], 0.3)
 
   local function Update()
     local range = scroll:GetVerticalScrollRange()
@@ -490,13 +504,29 @@ function Settings:SetEditing(key, on)
   self:RefreshState()
 end
 
+-- A box holding a changed draft that is not a valid value (an emptied
+-- message): nothing to apply, but Cancel puts the saved text back (Task #239).
+-- Ignored while the window paints its controls, and while it is closed.
+function Settings:SetInvalid(key, on)
+  if self.syncing or not self:IsShown() then return end
+  on = on and true or nil
+  if self.invalid[key] == on then return end
+  self.invalid[key] = on
+  self:RefreshState()
+end
+
 function Settings:HasPending()
   return next(self.pending) ~= nil
 end
 
--- Something for Apply or Cancel to act on: a staged value, or typing
-function Settings:HasEdits()
+-- Something Apply can save: a staged value, or typing it commits first
+function Settings:HasApplicable()
   return self:HasPending() or next(self.editing) ~= nil
+end
+
+-- Something Cancel can discard: that, or a changed draft that is not valid
+function Settings:HasEdits()
+  return self:HasApplicable() or next(self.invalid) ~= nil
 end
 
 -- Paints the bound controls from resolver(key), without staging. With
@@ -506,7 +536,7 @@ function Settings:Populate(resolver, onlyKey, skipStaged)
   self.syncing = true
   for _, control in ipairs(self.controls) do
     local key = control.key
-    local held = skipStaged and (self.pending[key] ~= nil or self.editing[key])
+    local held = skipStaged and (self.pending[key] ~= nil or self.editing[key] or self.invalid[key])
     if (onlyKey == nil or key == onlyKey) and not held and self:ConfigFor(key) then
       control.set(resolver(key))
     end
@@ -527,6 +557,7 @@ function Settings:Sync()
   self:StopEditing()
   wipe(self.pending)
   wipe(self.editing)
+  wipe(self.invalid)
   self:Populate(self.getter)
 end
 
@@ -632,9 +663,8 @@ end
 -- (a Description filled in refresh), and the layout measures each row's
 -- height from the text it has then.
 function Settings:RefreshState()
-  local edits = self:HasEdits()
-  self.ApplyButton:SetEnabled(edits)
-  self.CancelButton:SetEnabled(edits)
+  self.ApplyButton:SetEnabled(self:HasApplicable())
+  self.CancelButton:SetEnabled(self:HasEdits())
   for _, row in ipairs(self.dynamicRows) do
     if row.enabledWhen and row.SetRowEnabled then
       row.SetRowEnabled(row.enabledWhen(self.getter) and true or false)
@@ -1425,14 +1455,24 @@ function Panel:MultiLine(o)
   local function Valid(text)
     return not o.validate or o.validate(text)
   end
+  -- A draft that is not a valid value but differs from the saved text is an
+  -- edit Cancel can discard, though Apply has nothing to save (Task #239)
+  local function MarkInvalid(folded)
+    local config = window:ConfigFor(o.key)
+    local saved = config and config.Get(o.key)
+    window:SetInvalid(o.key, folded ~= Fold(tostring(saved or "")))
+  end
   -- The box's text, staged when it is a valid value, and the rows repainted
   local function StageDraft(text)
     local folded = Fold(text or "")
     if Valid(folded) then
+      window:SetInvalid(o.key, false)
       window:StageEdit(o.key, folded)
-    elseif window.pending[o.key] ~= nil then
-      window:Unstage(o.key)
-    elseif not window.syncing then
+      return
+    end
+    if window.pending[o.key] ~= nil then window:Unstage(o.key) end
+    if not window.syncing then
+      MarkInvalid(folded)
       window:Refresh()
     end
   end
@@ -1461,9 +1501,11 @@ function Panel:MultiLine(o)
   local function StageShown()
     local folded = Fold(row.Box.EditBox:GetText())
     if Valid(folded) then
+      window:SetInvalid(o.key, false)
       window:StageEdit(o.key, folded)
     else
       window:Unstage(o.key)
+      MarkInvalid(folded)
     end
   end
   -- The box spans the row; its text area is 18 narrower, as the factory
@@ -2298,7 +2340,9 @@ end
 ---------------------------------------------------------------------------
 -- Preview{ caption (live), text (live) and color (live), or height,
 --   build(frame, window) and refresh(frame, window); ticker (seconds),
---   dimWhen(get), action = { text, onClick(window), tooltip, width } }: a
+--   dimWhen(get), action = { text, onClick(window), tooltip, width },
+--   font (the text's font object; default the chat font, for a chat line:
+--   an example that is not a chat line passes U.Fonts.BODY) }: a
 -- framed, inset example that follows the staged values (it repaints on every
 -- stage, never per frame). Label a passive example caption = "Example": it
 -- shows the staged choices and changes nothing live. With text it is a
@@ -2344,7 +2388,7 @@ function Panel:Preview(o)
   box:SetEdgeColor(U.Colors.CONTENT_BORDER, 0.6)
   row.Box = box
   if o.text then
-    box.Text = box:CreateFontString(nil, "OVERLAY", "ChatFontNormal")
+    box.Text = box:CreateFontString(nil, "OVERLAY", o.font or "ChatFontNormal")
     box.Text:SetPoint("TOPLEFT", 8, -6)
     box.Text:SetJustifyH("LEFT")
     box.Text:SetWordWrap(true)
@@ -2658,6 +2702,15 @@ function UI.CreateStatTiles(parent, o)
     local columns = FitColumns(wanted, math.max(shown, 1), width, o.minTileWidth or TILE_MIN_W)
     self.columns = columns
     local tileWidth = (width - (columns - 1) * TILE_GAP) / columns
+    -- the values in the large font when every one fits, else all in the body
+    -- font: one tile alone in the small font read as two typefaces (Task #239)
+    local titleFont = U.Fonts.TITLE
+    for i = 1, shown do
+      local tile = self.Tiles[i]
+      local titleRoom = tileWidth - (tile.textX or 12) - (tile.hasState and (28 + tile.State:GetStringWidth() + 6) or 10)
+      tile.Title:SetFontObject(U.Fonts.TITLE)
+      if tile.Title:GetUnboundedStringWidth() > titleRoom then titleFont = U.Fonts.BODY end
+    end
     local y = 0
     for first = 1, math.max(shown, 1), columns do
       local lineH = height
@@ -2666,11 +2719,8 @@ function UI.CreateStatTiles(parent, o)
         tile:SetWidth(tileWidth)
         local textRoom = tileWidth - (tile.textX or 12) - 10
         tile.Text:SetWidth(textRoom)
-        -- the value in the large font when it fits, else the body font; the
-        -- label's short form when the full one would wrap (Loot Sweeper's five tiles)
-        local titleRoom = tileWidth - (tile.textX or 12) - (tile.hasState and (28 + tile.State:GetStringWidth() + 6) or 10)
-        tile.Title:SetFontObject(U.Fonts.TITLE)
-        if tile.Title:GetUnboundedStringWidth() > titleRoom then tile.Title:SetFontObject(U.Fonts.BODY) end
+        -- the label's short form when the full one would wrap (Loot Sweeper's five tiles)
+        tile.Title:SetFontObject(titleFont)
         Color(tile.Title, tile.titleColor)
         tile.Text:SetText(tile.labelFull or "")
         if tile.labelShort and tile.Text:GetUnboundedStringWidth() > textRoom then tile.Text:SetText(tile.labelShort) end
@@ -2948,9 +2998,17 @@ function Panel:DropdownAction(o)
   end
   row.Reflow(self.layout.contentWidth)
   if o.detail then
+    -- wraps under the dropdown and button, the row growing for a second line
+    -- (Task #239: a long detail ran past the panel's right edge)
     row.Detail = DescText(row)
     row.Detail:SetPoint("TOPLEFT", row.Dropdown, "BOTTOMLEFT", 2, -3)
+    row.Detail:SetPoint("RIGHT", row, "RIGHT", -(PAD + SCROLLBAR_ROOM), 0)
     row.Detail:SetJustifyH("LEFT")
+    row.Detail:SetWordWrap(true)
+    row.Measure = function()
+      local shown = row.Detail:IsShown() and (row.Detail:GetText() or "") ~= ""
+      row:SetHeight(lineH + (shown and math.max(16, math.ceil(row.Detail:GetStringHeight() or 0) + 4) or 0))
+    end
   end
   row.Empty = DescText(row)
   row.Empty:SetPoint("RIGHT", row, "TOPRIGHT", -(PAD + SCROLLBAR_ROOM), y)
@@ -2961,6 +3019,10 @@ function Panel:DropdownAction(o)
     if not row.Detail then return end
     local value = row.Dropdown:GetValue()
     row.Detail:SetText(value ~= nil and (Live(function() return o.detail(value, window) end) or "") or "")
+    -- a pick whose detail takes another line lays the panel out again
+    local before = row:GetHeight()
+    row.Measure()
+    if row:GetHeight() ~= before and window:IsShown() then self:Layout() end
   end
   local signature
   table.insert(window.refreshers, function()
@@ -3312,6 +3374,7 @@ function UI.CreateSettingsWindow(opts)
   window.config = opts.config
   window.pending = {}
   window.editing = {}
+  window.invalid = {}
   window.controls = {}
   window.keys = {}
   window.keyConfig = {}      -- [key] = the category config that owns it (a config or a function)
@@ -3367,7 +3430,7 @@ function UI.CreateSettingsWindow(opts)
   end
   -- Clear of the resize grip in the corner
   window.CancelButton = UI.CreateButton(window, {
-    size = { FOOTER_BUTTON_W, FOOTER_BUTTON_H }, text = "Cancel",
+    size = { FOOTER_BUTTON_W, FOOTER_BUTTON_H }, text = "Undo edits",
     tooltip = "Undo the changes you haven't applied yet. The window stays open.",
     point = { "BOTTOMRIGHT", window.ResizeGrip and -22 or -12, 12 },
     onClick = function() window:Cancel() end,
@@ -3443,6 +3506,7 @@ function UI.CreateSettingsWindow(opts)
     self:StopEditing()
     wipe(self.pending)
     wipe(self.editing)
+    wipe(self.invalid)
     self.DefaultsPopup:Hide()
   end)
 

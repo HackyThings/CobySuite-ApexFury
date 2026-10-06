@@ -498,10 +498,10 @@ function CobySuite_ApexFury.Debug.NewWindow(opts)
   f._tabs = tabs
   f._tabContents = {}
 
-  -- EntryCount label
+  -- EntryCount label, on the log's left edge
   f.EntryCount = f:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
   f.EntryCount:SetJustifyH("LEFT")
-  f.EntryCount:SetPoint("TOPLEFT", 70, -28)
+  f.EntryCount:SetPoint("TOPLEFT", 12, -28)
 
   -- Scrolling log display, a whole number of lines high: it fills from the
   -- bottom, so a height between two line counts cut its top line in half
@@ -520,7 +520,6 @@ function CobySuite_ApexFury.Debug.NewWindow(opts)
   end
   f:HookScript("OnSizeChanged", FitLog)
   f:HookScript("OnShow", FitLog)
-  f.FitLog = FitLog
 
   -- Copy overlay scroll frame
   f.CopyScrollFrame = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")

@@ -3,7 +3,7 @@
 --
 -- The suite's standard settings window (CobySuite.UI.CreateSettingsWindow):
 -- a sidebar with Alert, Sound and Advanced, staged edits that Apply writes
--- through Config.Set, Cancel, Defaults and the Guide button (the standard
+-- through Config.Set, Undo edits, Defaults and the Guide button (the standard
 -- footer). The addon is also listed under Options > AddOns with a button
 -- that opens this window (CobySuite.UI.RegisterSettingsCategory).
 --
@@ -145,16 +145,35 @@ local function LongestDragonrage(gate)
   return base + ApexFury.Watcher.ANIMOSITY_EXTENSION / (1 - ApexFury.Watcher.ANIMOSITY_DIMINISHING)
 end
 
+-- Most stacks as configured (Advanced); the saved value may pass the tiles' 10
+local function StackCap(win)
+  return math.max(1, math.floor(StagedNumber(win, Opt.MAX_STACKS)))
+end
+
+-- How many stack tiles the Alert page shows
 local function MaxStacks(win)
-  local n = math.floor(StagedNumber(win, Opt.MAX_STACKS))
-  return math.max(1, math.min(MAX_STACKS_SHOWN, n))
+  return math.min(MAX_STACKS_SHOWN, StackCap(win))
+end
+
+-- Rising Fury rank 1 or 2, read on Devastation: the buff ends with Dragonrage
+local function LowRank(gate)
+  return GateRead(gate) and gate.isDevastation
+    and type(gate.risingFuryRank) == "number" and gate.risingFuryRank >= 1 and gate.risingFuryRank < 3
+end
+
+-- The longest Rising Fury lasts after Dragonrage in the staged model
+local function LongestLinger(get)
+  local function n(key)
+    local v = get(key)
+    if type(v) == "number" then return v end
+    return Config.Defaults[key]
+  end
+  return math.min(n(Opt.LINGER_MAX), n(Opt.MAX_STACKS) * n(Opt.LINGER_PER_STACK))
 end
 
 -- The most stacks every Dragonrage reaches without an extension
 local function StacksWithoutExtension(win)
-  local interval = StagedNumber(win, Opt.STACK_INTERVAL)
-  local base = ApexFury.Watcher.DR_BASE_DURATION
-  return math.floor((base - ApexFury.Watcher.THRESHOLD_BUFFER) / interval) + 1
+  return ApexFury.Watcher.StacksWithoutExtension(StagedNumber(win, Opt.STACK_INTERVAL))
 end
 
 -------------------------------------------------------------------------------
@@ -186,6 +205,15 @@ local function StatusOf(win)
         threshold, StacksWithoutExtension(win))
     end
     return "Ready", GREEN, "Without Animosity, Dragonrage lasts 18 seconds."
+  end
+  if RequiredDuration(win) > LongestDragonrage(gate) then
+    return "Ready, but this alert can't play", AMBER, string.format(
+      "Dragonrage can't last until stack %d. Pick an earlier stack below.", threshold)
+  end
+  if threshold > StackCap(win) then
+    return "Ready, past the stack cap", AMBER, string.format(
+      "Timed for stack %d at +%ss, past the %d stacks Rising Fury reaches. It still plays if Dragonrage lasts that long.",
+      threshold, Seconds(AlertDelay(win)), StackCap(win))
   end
   if gate.hasAnimosity == nil then
     return "Talent check incomplete", AMBER,
@@ -219,10 +247,14 @@ local function RisingFuryTile(field)
     return ({ state = "unknown", word = "Not checked", text = "Read on Devastation only" })[field]
   end
   local rank = gate.risingFuryRank or 0
-  if rank >= 3 then
-    return ({ state = "ok", word = "Rank 3", text = "Stacks stay after Dragonrage" })[field]
-  elseif rank >= 1 then
-    return ({ state = "ok", word = "Rank " .. rank, text = "Stacks end with Dragonrage" })[field]
+  if rank >= 1 then
+    local text = rank >= 3 and "Stacks stay after Dragonrage" or "Stacks end with Dragonrage"
+    if field == "tip" then
+      local of = type(gate.risingFuryMaxRank) == "number" and gate.risingFuryMaxRank >= rank
+        and (" of " .. gate.risingFuryMaxRank) or ""
+      return "Rising Fury: rank " .. rank .. of .. ". " .. text .. "."
+    end
+    return ({ state = "ok", word = "Rank " .. rank, text = text })[field]
   end
   return ({ state = "off", word = "Not taken", text = "Needed: it is the buff ApexFury times" })[field]
 end
@@ -248,7 +280,9 @@ local function TalentTile(title, iconID, read)
     state = Safe("talent tile", function() return read("state") end),
     stateText = Safe("talent tile", function() return read("word") end),
     description = Safe("talent tile", function() return read("text") end),
-    tooltip = Safe("talent tile", function() return title .. ": " .. read("word") .. ". " .. read("text") .. "." end),
+    tooltip = Safe("talent tile", function()
+      return read("tip") or (title .. ": " .. read("word") .. ". " .. read("text") .. ".")
+    end),
   }
 end
 
@@ -306,20 +340,30 @@ local function StackTile(win, n, default, gate)
   }
 end
 
--- A saved threshold past Most stacks: still timed (the watcher checks only
--- Dragonrage's length), but past Rising Fury's last stack
-local function CustomStackTile(win, threshold, maxStacks)
+-- A saved threshold past the tiles: still timed (the watcher checks only
+-- Dragonrage's length). Past Most stacks it is past Rising Fury's last
+-- stack; within it (a saved Most stacks above the 10 tiles) it is only
+-- past the tiles.
+local function CustomStackTile(win, threshold)
   local delay = AlertDelay(win, threshold)
-  return {
+  local cap = StackCap(win)
+  local tile = {
     value = threshold,
     icon = ApexFury.ICON,
     count = tostring(threshold),
     title = "Custom: " .. threshold,
-    description = string.format("+%ss, past the %d-stack cap", Seconds(delay), maxStacks),
-    warn = true,
-    tooltip = string.format("Your saved stack count, past Rising Fury's %d-stack cap: the alert comes %s seconds after the cast. Click another tile to replace it.",
-      maxStacks, Seconds(delay)),
   }
+  if threshold > cap then
+    tile.description = string.format("+%ss, past the cap of %d", Seconds(delay), cap)
+    tile.warn = true
+    tile.tooltip = string.format("Your saved stack, past the %d stacks Rising Fury reaches: the alert comes %s seconds after the cast if Dragonrage lasts that long. Click another tile to replace it.",
+      cap, Seconds(delay))
+  else
+    tile.description = string.format("+%ss, your saved stack", Seconds(delay))
+    tile.tooltip = string.format("Your saved stack: the alert comes %s seconds after the cast. Click another tile to replace it.",
+      Seconds(delay))
+  end
+  return tile
 end
 
 local function StackTiles(_, win)
@@ -330,7 +374,7 @@ local function StackTiles(_, win)
   for n = 1, maxStacks do list[n] = StackTile(win, n, default, gate) end
   local threshold = win:Get(Opt.THRESHOLD)
   if type(threshold) == "number" and threshold > maxStacks then
-    list[#list + 1] = CustomStackTile(win, threshold, maxStacks)
+    list[#list + 1] = CustomStackTile(win, threshold)
   end
   return list
 end
@@ -384,8 +428,6 @@ local function PlaceSegment(texture, box, x, scale, t0, t1)
 end
 
 local function PaintTimeline(box, win)
-  -- Only the box BuildTimeline filled (an older kit also passed the row)
-  if not box.Track then return end
   local barW = box:GetWidth() - 8 - 120
   if barW <= 20 then return end
   local gate = Gate()
@@ -439,7 +481,7 @@ local function TimelineNote(win)
   local need = RequiredDuration(win)
   local base = ApexFury.Watcher.DR_BASE_DURATION
   if need <= base then
-    return "Every Dragonrage reaches this stack, so the alert plays every time."
+    return "Every Dragonrage reaches this stack. The hold rules below still apply."
   end
   if AnimosityMissing(gate) then
     return U.WrapColor(AMBER, string.format(
@@ -448,11 +490,12 @@ local function TimelineNote(win)
   end
   local longest = LongestDragonrage(gate)
   if need > longest then
-    return U.WrapColor(RED, string.format("Dragonrage can't last %ss, so this alert can't play.", Seconds(need)))
+    return U.WrapColor(RED, string.format("Dragonrage can't last until +%ss, so this alert can't play. Pick an earlier stack.",
+      Seconds(AlertDelay(win))))
   end
   return string.format(
-    "Plays only when Dragonrage lasts past %ss. Each Fire Breath or Eternity Surge you finish during it adds time (Animosity).",
-    Seconds(need))
+    "Plays only if Dragonrage lasts longer than %ss. Each Fire Breath or Eternity Surge you finish during it adds time (Animosity).",
+    Seconds(AlertDelay(win)))
 end
 
 local function BuildStacks(panel, win)
@@ -464,8 +507,13 @@ local function BuildStacks(panel, win)
     options = Safe("stack tiles", StackTiles),
     description = Safe("stack tiles", function(w)
       local default = Config.Defaults[Opt.THRESHOLD]
-      return string.format("The alert plays when this stack lands. %d is the default: stack %d, %s seconds after you cast Dragonrage.",
-        default, default, Seconds(AlertDelay(w, default)))
+      local picked = StagedNumber(w, Opt.THRESHOLD)
+      local delay = AlertDelay(w, picked)
+      local when = delay > 0 and (Seconds(delay) .. " seconds after you cast Dragonrage") or "as you cast Dragonrage"
+      if picked == default then
+        return string.format("Picked: stack %d, %s (the default).", picked, when)
+      end
+      return string.format("Picked: stack %d, %s. %d is the default.", picked, when, default)
     end),
   }
   panel:Preview{
@@ -503,23 +551,32 @@ local function BuildHold(panel)
   panel:Checkbox{
     key = Opt.ACTIONABILITY_GATE, label = "Hold the alert until I can act",
     tooltip = "An alert that comes while you can't act waits until you can.",
-    description = "On a vehicle, mounted, stunned, feared or mind-controlled? It plays once you're back in control. Off: it plays right away.",
+    description = "In a vehicle, mounted, stunned, feared or mind-controlled? It plays once you're back in control. Off: it plays right away.",
   }
   panel:Slider{
     key = Opt.MIN_REMAINING, label = "Skip a held alert with less than",
-    tooltip = "A held alert that comes after Dragonrage ends needs this much Rising Fury left, or it is skipped.",
+    tooltip = "A held alert that comes after Dragonrage ends needs this much Rising Fury left, or it is skipped. An alert never plays once Rising Fury has ended.",
     min = 0, max = MIN_REMAINING_MAX, step = 0.5,
     format = function(v) return Seconds(v) .. "s of Rising Fury left" end,
     customText = function(v) return "Custom: " .. Seconds(v) .. "s of Rising Fury left" end,
-    minLabel = "0s: never skip", maxLabel = Seconds(MIN_REMAINING_MAX) .. "s",
+    minLabel = "0s: no minimum", maxLabel = Seconds(MIN_REMAINING_MAX) .. "s",
     description = "A held alert that comes after Dragonrage ends plays only while at least this much Rising Fury is left.",
-    enabledWhen = EitherHold,
+    -- at rank 1 or 2 nothing is left after Dragonrage, so it never applies
+    enabledWhen = function(get) return EitherHold(get) and not LowRank(Gate()) end,
   }
   panel:Note{
-    text = "Your Rising Fury rank ends the buff with Dragonrage, so a held alert never plays after it. Rank 3 keeps it a few seconds longer.",
-    visibleWhen = function()
-      local gate = Gate()
-      return GateRead(gate) and gate.isDevastation and (gate.risingFuryRank == 1 or gate.risingFuryRank == 2)
+    text = "Your Rising Fury rank ends the buff with Dragonrage, so a held alert never plays after it. Rank 3 or higher keeps it a few seconds longer.",
+    visibleWhen = function() return LowRank(Gate()) end,
+  }
+  panel:Note{
+    text = Safe("linger note", function(win)
+      return U.WrapColor(AMBER, string.format(
+        "Rising Fury lasts at most %ss after Dragonrage, so a held alert can only play during Dragonrage.",
+        Seconds(LongestLinger(function(key) return win:Get(key) end))))
+    end),
+    visibleWhen = function(get)
+      return EitherHold(get) and not LowRank(Gate())
+        and (get(Opt.MIN_REMAINING) or 0) > LongestLinger(get)
     end,
   }
 end
@@ -573,14 +630,31 @@ local function SelectedKindText(kind)
   return UI.SoundBrowser.KindLabel(kind)
 end
 
+-- A Leatrix pick's label is the sound file's path: its name without the
+-- folders and extension reads better ("sound/interface/readycheck.ogg" ->
+-- "readycheck"); the path stays saved and shows in the label's tooltip
+local function FileName(path)
+  local name = path:match("([^/\\]+)$") or path
+  return (name:gsub("%.%w+$", ""))
+end
+
 local function PaintSelectedSound(row, win)
   local entry = SoundEntryFor(win:Get(Opt.SOUND_ID), win:Get(Opt.SOUND_LABEL))
-  row.SelectedLabel:SetText(entry.label or "|cFFAAAAAA(unknown)|r")
+  local label = entry.label
+  local path = entry.kind == "FileDataID" and type(label) == "string" and label:find("[/\\]") and label or nil
+  row.SelectedLabel:SetText(path and FileName(path) or label or "|cFFAAAAAA(unknown)|r")
+  if path and row.PathHover.path ~= path then
+    UI.AddTooltip(row.PathHover, "Sound file: " .. path, "ANCHOR_RIGHT")
+  end
+  row.PathHover.path = path
+  row.PathHover:EnableMouse(path ~= nil)
   local source = entry.pack or entry.source or ""
-  local line = SelectedSourceText(source) .. " · " .. SelectedKindText(entry.kind or "")
   if source == "Pack not installed" then
-    row.SelectedSource:SetText(U.WrapColor(AMBER, line))
+    -- the alert falls back to the default sound (ApexFury.Sound.Play)
+    row.SelectedSource:SetText(U.WrapColor(AMBER, string.format(
+      "Pack not installed: the alert plays %s until it's back", U.StripColors(ApexFury.Sound.DefaultLabel()))))
   else
+    local line = SelectedSourceText(source) .. " · " .. SelectedKindText(entry.kind or "")
     row.SelectedSource:SetText("|cFF888888" .. line .. "|r")
   end
 end
@@ -615,6 +689,12 @@ local function BuildSoundCard(panel, win, getBrowser)
       row.SelectedLabel:SetWidth(rightEdge - valueX)
       row.SelectedLabel:SetJustifyH("LEFT")
       row.SelectedLabel:SetWordWrap(false)
+
+      -- A Leatrix pick's full file path, on hover over its name
+      local hover = CreateFrame("Frame", nil, row)
+      hover:SetAllPoints(row.SelectedLabel)
+      hover:EnableMouse(false)
+      row.PathHover = hover
 
       row.SelectedSource = row:CreateFontString(nil, "OVERLAY", Fonts.DATA)
       row.SelectedSource:SetPoint("LEFT", row, "TOPLEFT", valueX, mid - 10)
@@ -968,7 +1048,7 @@ local function BuildTiming(panel, win)
     "The most Rising Fury stacks you can have. Also how many stack tiles the Alert page shows (10 at most).",
     function(v) return v >= 1 and v <= MAX_STACKS_SHOWN and math.floor(v) == v end)
   TimingInput(panel, Opt.LINGER_PER_STACK, "Seconds kept per stack",
-    "With Rising Fury rank 3, how long the buff stays after Dragonrage ends, for each stack.",
+    "With Rising Fury rank 3 or higher, how long the buff stays after Dragonrage ends, for each stack.",
     function(v) return v >= 0 and v <= 60 end)
   TimingInput(panel, Opt.LINGER_MAX, "Most seconds kept",
     "The cap on how long Rising Fury stays after Dragonrage ends.",
@@ -1104,7 +1184,7 @@ EventUtil.ContinueOnAddOnLoaded("ApexFury", function()
     brandColor  = ApexFury.BRAND_COLOR,
     version     = ApexFury.VERSION,
     description = {
-      "Plays a sound the moment a Devastation Evoker's Rising Fury reaches 4 stacks, timed from Dragonrage and your empowers.",
+      "Plays a sound the moment a Devastation Evoker's Rising Fury reaches your chosen stack (4 by default), timed from Dragonrage and your empowers.",
       "The settings live in the addon's own settings window.",
     },
     slash       = "/af settings",

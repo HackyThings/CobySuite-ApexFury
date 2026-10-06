@@ -266,11 +266,9 @@ function CobySuite_ApexFury.Debug.NewLogger(opts)
     -- writePos points to the slot AFTER the newest entry (the next slot to
     -- write into), so the newest entry sits at writePos-1 in 1-indexed
     -- terms, which is `(writePos - 0 - 2) % maxEntries + 1`. Subtracting
-    -- only -1 lands on writePos itself, which is the OLDEST slot in a
+    -- only -1 would land on writePos itself, which is the OLDEST slot in a
     -- wrapped buffer (or a nil slot in a partial buffer, dropping the
-    -- oldest entry). The off-by-one corrupted Copy All / Copy Last 250
-    -- output even though the live debug window (GetFilteredEntries) was
-    -- fine.
+    -- oldest entry).
     local count = 0
     for step = 0, bufferSize - 1 do
       local idx = (writePos - step - 2) % maxEntries + 1

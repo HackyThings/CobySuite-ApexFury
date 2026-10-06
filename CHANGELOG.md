@@ -4,6 +4,24 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-10-06
+
+### Changed
+
+- The Alert card warns when the stack you picked can't be reached, or is past the stacks Rising Fury reaches, instead of reading Ready.
+- The skip slider is greyed out at Rising Fury rank 1 or 2, where it never applies, and warns when it asks for more Rising Fury than can be left.
+- The Rising Fury tile and the talent messages in chat and on the overlay show your real rank ("rank 3 or higher"), and say "Rising Fury" in full.
+- The no-Animosity stack limit in chat, the overlay and the addon list tooltip follows your timing settings instead of always saying 3.
+- The overlay has the ApexFury icon, comes to the front when clicked, and its fourth line is now **Cycle** ("fired at 18.000s", "4.0s since cast").
+- **Settings:** the Cancel button is now **Undo edits**, with the same job: it drops changes you have not applied.
+- Many smaller look and wording improvements across the windows.
+
+### Fixed
+
+- A sound from an uninstalled pack no longer leaves the alert silent: it plays the default sound until the pack is back, and the Sound page says so.
+- The overlay says when alerts are turned off, and when the sound failed to play, instead of reading ready and fired.
+- A held alert that plays late shows as fired on the overlay right away.
+
 ## [1.0.6] - 2026-10-01
 
 ### Added
@@ -97,7 +115,8 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 Initial release of ApexFury.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.7
 [1.0.6]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.6
 [1.0.5]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.5
 [1.0.4]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.4

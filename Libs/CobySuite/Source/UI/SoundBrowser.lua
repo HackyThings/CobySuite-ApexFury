@@ -2,8 +2,8 @@
 -- CobySuite.UI.SoundBrowser: embeddable sound-picker widget
 --
 -- Reusable across consumer addons. Aggregates Blizzard SoundKit and every
--- LibSharedMedia pack (Astral / Causese / Other) into one searchable,
--- sortable, virtualized table.
+-- LibSharedMedia sound (grouped into packs by the addon folder each ships
+-- in) into one searchable, sortable, virtualized table.
 --
 -- Build it once, embed it inside an options window, and let the user
 -- pick. Selection is reported back via the onSelect callback; current
@@ -26,6 +26,7 @@
 -- Public methods on the returned frame:
 --   browser:Refresh()              re-pull entries (e.g. after addon load)
 --   browser:RefreshSelection()     re-read getCurrentValue + recolor rows
+--   browser:FillRowTooltip(tip, entry, shift)   a row's tooltip into any tooltip
 -------------------------------------------------------------------------------
 
 CobySuite_ApexFury.UI = CobySuite_ApexFury.UI or {}
@@ -118,7 +119,7 @@ FillRowTooltip = function(tip, entry, shift)
     end
   end
   tip:AddLine(" ", w[1], w[2], w[3])
-  tip:AddLine("|cFFAAAAAAClick to use this sound|r", w[1], w[2], w[3])
+  tip:AddLine("|cFFAAAAAAClick to preview and use this sound.|r", w[1], w[2], w[3])
 end
 
 ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ local function EnsureRowStructure(row, columns)
   row._initialized = true
 
   -- Hover highlight + selection background
-  row.Highlight = CobySuite_ApexFury.UI.AddHoverHighlight(row)
+  CobySuite_ApexFury.UI.AddHoverHighlight(row)
 
   row.SelectedBg = row:CreateTexture(nil, "BACKGROUND")
   row.SelectedBg:SetAllPoints()

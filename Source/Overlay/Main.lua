@@ -3,7 +3,7 @@
 --
 -- Seven tooltipped status lines for live verification of the watcher's
 -- decision-making: status / DR remaining / empowers + stacks reached and
--- projected / fired-after offset / last-alert-ago / live verdict / talent
+-- projected / the cycle's time and outcome / last-alert-ago / live verdict / talent
 -- gate. See LINE_TOOLTIPS below for per-line descriptions.
 --
 -- Everything shown comes from Watcher.GetState(); the overlay makes no aura
@@ -21,14 +21,20 @@ local lines = {}
 local U = CobySuite_ApexFury.Utilities
 local UI = CobySuite_ApexFury.UI
 
+-- Text colors from the shared palette
+local TXT_GREEN = "|cFF" .. U.Colors.TEXT_GREEN
+local TXT_ORANGE = "|cFF" .. U.Colors.TEXT_ORANGE
+local TXT_YELLOW = "|cFF" .. U.Colors.TEXT_YELLOW
+local TXT_LIGHT = "|cFF" .. U.ColorToHex(U.Colors.LIGHT_GRAY)
+
 local LINE_TOOLTIPS = {
-  [1] = "Counts down to the alert. PENDING: the moment came when you couldn't act on it (out of combat, a vehicle, mounted, possessed or crowd-controlled; the line says which), and it plays once that clears if its other checks pass. EXPIRED: Rising Fury ran out first. HOLD: Dragonrage looked too short, so it waits half a second for a late empower.",
+  [1] = "The alert's countdown, or what it is doing now. PENDING: held until you can act (the line says why). EXPIRED: Rising Fury ended first. HOLD: waiting half a second for a late empower.",
   [2] = "Dragonrage time left, then Rising Fury's linger. (read) is the game's own timer, taken out of combat after the cast and each empower, and kept until it ends or you cast an empower. Everything else is ApexFury's estimate.",
   [3] = "Empowers cast this Dragonrage, Rising Fury stacks so far, and in brackets the stacks expected when it ends. With Animosity each empower extends Dragonrage, so that number can grow.",
-  [4] = "Seconds from the Dragonrage cast to the alert sound, or to the moment the alert was dropped, and why. It stays put once decided.",
+  [4] = "Seconds since the Dragonrage cast, then the exact moment the alert played or was dropped, and why. It stays put once decided.",
   [5] = "How long ago the last alert sound played.",
   [6] = "Whether the alert's timing checks pass right now, or what stops it: Dragonrage too short, Rising Fury over, or less left than your skip setting. The combat and can-act holds are checked when the moment comes.",
-  [7] = "Talent check. ApexFury needs a Devastation Evoker with Rising Fury. Without Animosity, Dragonrage stops at 3 stacks, so set the threshold to 3 or lower.",
+  [7] = "Talent check. ApexFury needs a Devastation Evoker with Rising Fury. Without Animosity, Dragonrage can't be extended, so pick a stack it reaches on the Alert page.",
 }
 
 local NUM_LINES = 7
@@ -69,22 +75,23 @@ local function RenderGateLine(state)
   local detail = state.gateDetail or ""
   if reason == "ready" then
     lines[7]:SetText(string.format(
-      "|cFFCCCCCCGate:|r |cFF00FF00ready|r |cFF555555(RF rank %d, %s)|r",
+      TXT_LIGHT .. "Gate:|r " .. TXT_GREEN .. "ready|r |cFF555555(Rising Fury %d, %s)|r",
       state.gateRisingFury or 0,
       state.gateAnimosity == nil and "Animosity assumed" or "Animosity on"))
   elseif reason == "no_animosity" then
     lines[7]:SetText(string.format(
-      "|cFFCCCCCCGate:|r |cFFFFAA00active, max 3 stacks|r |cFF555555(no Animosity)|r"))
+      TXT_LIGHT .. "Gate:|r |cFFFFAA00active, up to %d stacks|r |cFF555555(no Animosity)|r",
+      ApexFury.Watcher.StacksWithoutExtension()))
   elseif reason == "no_rising_fury" then
-    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF8800Rising Fury not specced|r")
+    lines[7]:SetText(TXT_LIGHT .. "Gate:|r " .. TXT_ORANGE .. "Rising Fury not specced|r")
   elseif reason == "wrong_spec" then
-    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF8800wrong spec|r |cFF555555(switch to Devastation)|r")
+    lines[7]:SetText(TXT_LIGHT .. "Gate:|r " .. TXT_ORANGE .. "wrong spec|r |cFF555555(switch to Devastation)|r")
   elseif reason == "wrong_class" then
-    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Cwrong class|r")
+    lines[7]:SetText(TXT_LIGHT .. "Gate:|r |cFFFF4C4Cwrong class|r")
   elseif reason == "api_unavailable" then
-    lines[7]:SetText("|cFFCCCCCCGate:|r |cFFFF4C4Ctalents not loaded|r |cFF555555(change talents or zone)|r")
+    lines[7]:SetText(TXT_LIGHT .. "Gate:|r |cFFFF4C4Ctalents not loaded|r |cFF555555(change talents or zone)|r")
   else
-    lines[7]:SetText("|cFFCCCCCCGate:|r |cFF888888" .. tostring(detail) .. "|r")
+    lines[7]:SetText(TXT_LIGHT .. "Gate:|r |cFF888888" .. tostring(detail) .. "|r")
   end
 end
 
@@ -95,7 +102,7 @@ end
 ---------------------------------------------------------------------------
 local function RenderInactivePlaceholder(state)
   local detail = state.gateDetail or "Inactive"
-  lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF888888inactive|r")
+  lines[1]:SetText(TXT_LIGHT .. "Status:|r |cFF888888inactive|r")
   lines[2]:SetText("|cFF888888" .. detail .. "|r")
   lines[3]:SetText("|cFF888888--|r")
   lines[4]:SetText("|cFF888888--|r")
@@ -119,8 +126,14 @@ local function UpdateDisplay()
     return
   end
 
+  -- Alerts turned off: casts start nothing, so say so on lines 1 and 6
+  local Config = ApexFury.Config
+  local alertsOff = not Config.Get(Config.Options.ENABLED)
+
   -- Line 1: our timer / state
-  if state.alertPending then
+  if alertsOff then
+    lines[1]:SetText(TXT_LIGHT .. "Status:|r |cFF888888alerts off|r")
+  elseif state.alertPending then
     local elapsed = state.castTime and (now - state.castTime) or 0
     -- Linger past its predicted end? The watcher's stale-pending cleanup
     -- only fires 45s after the alert was deferred, so between actual linger
@@ -128,30 +141,33 @@ local function UpdateDisplay()
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[1]:SetText(string.format(
-        "|cFFCCCCCCStatus:|r |cFF888888EXPIRED: Rising Fury ended|r |cFF555555(%.1fs since cast)|r",
+        TXT_LIGHT .. "Status:|r |cFF888888EXPIRED: Rising Fury ended|r |cFF555555(%.1fs since cast)|r",
         elapsed))
     else
       local reasonText = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).status
       lines[1]:SetText(string.format(
-        "|cFFCCCCCCStatus:|r |cFFFFAA00PENDING: %s|r |cFF555555(%.1fs since cast)|r",
+        TXT_LIGHT .. "Status:|r |cFFFFAA00PENDING: %s|r |cFF555555(%.1fs since cast)|r",
         reasonText, elapsed))
     end
   elseif state.provisionalUntil and not state.alertFired and not state.alertSuppressed then
     lines[1]:SetText(string.format(
-      "|cFFCCCCCCStatus:|r |cFFFFAA00HOLD, waiting for a late empower|r |cFF555555(%.1fs)|r",
+      TXT_LIGHT .. "Status:|r |cFFFFAA00HOLD, waiting for a late empower|r |cFF555555(%.1fs)|r",
       math.max(0, state.provisionalUntil - now)))
   elseif state.castTime and state.alertScheduledFor and not state.alertFired and not state.alertSuppressed then
     local remaining = math.max(0, state.alertScheduledFor - now)
     lines[1]:SetText(string.format(
-      "|cFFCCCCCCOur timer:|r |cFF00FF00%.1fs|r", remaining))
+      TXT_LIGHT .. "Our timer:|r " .. TXT_GREEN .. "%.1fs|r", remaining))
   elseif state.alertSuppressed and state.lastSuppressReason then
     lines[1]:SetText(string.format(
-      "|cFFCCCCCCStatus:|r |cFFFF8800suppressed (%s)|r",
+      TXT_LIGHT .. "Status:|r " .. TXT_ORANGE .. "suppressed (%s)|r",
       SuppressReasonText(state.lastSuppressReason)))
-  elseif state.alertFired and state.castTime and (now - state.castTime) < 30 then
-    lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF00FF00fired|r")
+  elseif state.alertFired and state.soundFailed then
+    lines[1]:SetText(TXT_LIGHT .. "Status:|r " .. TXT_ORANGE .. "sound failed|r")
+  elseif state.alertFired and state.lastFiredTime and (now - state.lastFiredTime) < 30 then
+    -- 30s from the alert itself: a held alert can fire well after the cast
+    lines[1]:SetText(TXT_LIGHT .. "Status:|r " .. TXT_GREEN .. "fired|r")
   else
-    lines[1]:SetText("|cFFCCCCCCStatus:|r |cFF888888idle|r")
+    lines[1]:SetText(TXT_LIGHT .. "Status:|r |cFF888888idle|r")
   end
 
   -- Line 2: trigger remaining. The watcher's one-shot out-of-combat read
@@ -164,18 +180,18 @@ local function UpdateDisplay()
 
   if observedRem and observedRem > 0 then
     lines[2]:SetText(string.format(
-      "|cFFCCCCCCDR remain:|r |cFF00FFFF%.1fs|r |cFF555555(read, %d empowers)|r",
+      TXT_LIGHT .. "DR remain:|r |cFF00FFFF%.1fs|r |cFF555555(read, %d empowers)|r",
       observedRem, empowers))
   elseif state.triggerDropTime and lingerRem and lingerRem ~= math.huge then
     lines[2]:SetText(string.format(
-      "|cFFCCCCCCRF linger:|r |cFFFFFF00~%.1fs|r |cFF555555(model)|r", lingerRem))
+      TXT_LIGHT .. "RF linger:|r " .. TXT_YELLOW .. "~%.1fs|r |cFF555555(model)|r", lingerRem))
   elseif state.castTime and state.expectedTriggerEnd and not state.triggerDropTime then
     local predRem = math.max(0, state.expectedTriggerEnd - now)
     lines[2]:SetText(string.format(
-      "|cFFCCCCCCDR pred:|r |cFFFFFF00~%.1fs|r |cFF555555(model, %d empowers)|r",
+      TXT_LIGHT .. "DR pred:|r " .. TXT_YELLOW .. "~%.1fs|r |cFF555555(model, %d empowers)|r",
       predRem, empowers))
   else
-    lines[2]:SetText("|cFFCCCCCCDR remain:|r |cFF888888--|r")
+    lines[2]:SetText(TXT_LIGHT .. "DR remain:|r |cFF888888--|r")
   end
 
   -- Line 3: empowers cast + stacks reached so far + stacks projected at the
@@ -183,10 +199,10 @@ local function UpdateDisplay()
   local combatTag = inCombat and "|cFFFF6644[COMBAT]|r" or "|cFF888888[idle]|r"
   if state.castTime then
     lines[3]:SetText(string.format(
-      "|cFFCCCCCCEmpowers:|r |cFFFFFF00%d|r |cFFCCCCCC· stacks|r |cFFFFFF00~%d|r |cFF888888(~%d at DR end)|r %s",
+      TXT_LIGHT .. "Empowers:|r " .. TXT_YELLOW .. "%d|r " .. TXT_LIGHT .. "· stacks|r " .. TXT_YELLOW .. "~%d|r |cFF888888(~%d at DR end)|r %s",
       state.empowerCount or 0, state.stacksReached or 0, state.projectedStacksAtDrop or 0, combatTag))
   else
-    lines[3]:SetText("|cFFCCCCCCEmpowers:|r |cFF888888--|r " .. combatTag)
+    lines[3]:SetText(TXT_LIGHT .. "Empowers:|r |cFF888888--|r " .. combatTag)
   end
 
   -- Line 4: precise verifiable timer: exactly when the sound played
@@ -194,19 +210,19 @@ local function UpdateDisplay()
   -- suppression offset if alert was cancelled.
   if state.lastFiredOffset then
     lines[4]:SetText(string.format(
-      "|cFFCCCCCCFired after:|r |cFF00FF00%.3fs|r",
+      TXT_LIGHT .. "Cycle:|r " .. TXT_GREEN .. "fired at %.3fs|r",
       state.lastFiredOffset))
   elseif state.lastSuppressOffset then
     lines[4]:SetText(string.format(
-      "|cFFCCCCCCFired after:|r |cFFFF8800suppressed @ %.3fs|r |cFF555555(%s)|r",
+      TXT_LIGHT .. "Cycle:|r " .. TXT_ORANGE .. "suppressed at %.3fs|r |cFF555555(%s)|r",
       state.lastSuppressOffset, SuppressReasonText(state.lastSuppressReason)))
   elseif state.castTime and not state.alertFired then
     -- Live elapsed since cast (counting up toward scheduled fire)
     local elapsed = now - state.castTime
     lines[4]:SetText(string.format(
-      "|cFFCCCCCCFired after:|r |cFFAAAAAA%.2fs elapsed...|r", elapsed))
+      TXT_LIGHT .. "Cycle:|r |cFFAAAAAA%.1fs since cast|r", elapsed))
   else
-    lines[4]:SetText("|cFFCCCCCCFired after:|r |cFF888888--|r")
+    lines[4]:SetText(TXT_LIGHT .. "Cycle:|r |cFF888888--|r")
   end
 
   -- Line 5: relative "ago" reading for context
@@ -214,12 +230,12 @@ local function UpdateDisplay()
     local agoSec = now - state.lastFiredTime
     if agoSec < 120 then
       lines[5]:SetText(string.format(
-        "|cFFCCCCCCLast alert:|r |cFFFF8800%.0fs ago|r", agoSec))
+        TXT_LIGHT .. "Last alert:|r " .. TXT_ORANGE .. "%.0fs ago|r", agoSec))
     else
-      lines[5]:SetText("|cFFCCCCCCLast alert:|r |cFF888888--|r")
+      lines[5]:SetText(TXT_LIGHT .. "Last alert:|r |cFF888888--|r")
     end
   else
-    lines[5]:SetText("|cFFCCCCCCLast alert:|r |cFF888888--|r")
+    lines[5]:SetText(TXT_LIGHT .. "Last alert:|r |cFF888888--|r")
   end
 
   -- Line 6: live verdict, a preview of FireAlert's gates in its order
@@ -227,29 +243,32 @@ local function UpdateDisplay()
   -- duration waits while an empower can still extend the cycle (up to the
   -- predicted end plus the grace, unless Animosity is known missing), as
   -- FireAlert's hold does; after that it is a trigger_too_short suppress.
-  if not state.castTime then
-    lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF888888idle|r")
+  if alertsOff then
+    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r |cFF888888turn on Enable alerts in the settings|r")
+  elseif not state.castTime then
+    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r |cFF888888idle|r")
+  elseif state.alertFired and state.soundFailed then
+    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r " .. TXT_ORANGE .. "FIRED, but the sound didn't play|r")
   elseif state.alertFired then
-    lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF00FF00FIRED|r")
+    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r " .. TXT_GREEN .. "FIRED|r")
   elseif state.alertSuppressed then
     lines[6]:SetText(string.format(
-      "|cFFCCCCCCVerdict:|r |cFFFF8800SUPPRESSED|r |cFF555555(%s)|r",
+      TXT_LIGHT .. "Verdict:|r " .. TXT_ORANGE .. "SUPPRESSED|r |cFF555555(%s)|r",
       SuppressReasonText(state.lastSuppressReason)))
   elseif state.provisionalUntil then
     lines[6]:SetText(
-      "|cFFCCCCCCVerdict:|r |cFFFFAA00hold, waiting for a late empower|r")
+      TXT_LIGHT .. "Verdict:|r |cFFFFAA00hold, waiting for a late empower|r")
   elseif state.alertPending then
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[6]:SetText(
-        "|cFFCCCCCCVerdict:|r |cFF888888expired: Rising Fury ended|r")
+        TXT_LIGHT .. "Verdict:|r |cFF888888expired: Rising Fury ended|r")
     else
       local detail = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).verdict
       lines[6]:SetText(string.format(
-        "|cFFCCCCCCVerdict:|r |cFFFFAA00deferred: %s|r", detail))
+        TXT_LIGHT .. "Verdict:|r |cFFFFAA00deferred: %s|r", detail))
     end
   else
-    local Config = ApexFury.Config
     local interval    = Config.Get(Config.Options.STACK_INTERVAL)
     local threshold   = Config.Get(Config.Options.THRESHOLD)
     local minRem      = Config.Get(Config.Options.MIN_REMAINING) or 0
@@ -265,20 +284,20 @@ local function UpdateDisplay()
 
     if actualDur < requiredDur and canExtend then
       lines[6]:SetText(string.format(
-        "|cFFCCCCCCVerdict:|r |cFFFFAA00wait: DR %.1fs / %.1fs needed|r",
+        TXT_LIGHT .. "Verdict:|r |cFFFFAA00wait: DR %.1fs / %.1fs needed|r",
         actualDur, requiredDur))
     elseif actualDur < requiredDur then
       lines[6]:SetText(string.format(
-        "|cFFCCCCCCVerdict:|r |cFFFF8800suppress: DR %.1fs < %.1fs needed|r",
+        TXT_LIGHT .. "Verdict:|r " .. TXT_ORANGE .. "suppress: DR %.1fs < %.1fs needed|r",
         actualDur, requiredDur))
     elseif not rfAlive then
-      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger expired|r")
+      lines[6]:SetText(TXT_LIGHT .. "Verdict:|r " .. TXT_ORANGE .. "suppress: linger expired|r")
     elseif rem ~= math.huge and rem < minRem then
       lines[6]:SetText(string.format(
-        "|cFFCCCCCCVerdict:|r |cFFFF8800suppress: linger %.1fs < %.1fs|r",
+        TXT_LIGHT .. "Verdict:|r " .. TXT_ORANGE .. "suppress: linger %.1fs < %.1fs|r",
         rem, minRem))
     else
-      lines[6]:SetText("|cFFCCCCCCVerdict:|r |cFF00FF00TIMING OK|r |cFF555555(holds checked when it comes)|r")
+      lines[6]:SetText(TXT_LIGHT .. "Verdict:|r " .. TXT_GREEN .. "TIMING OK|r |cFF555555(holds checked when it comes)|r")
     end
   end
 
@@ -318,12 +337,12 @@ local function BuildFrame()
   local f = UI.CreateWindow({
     name       = "ApexFuryOverlay",
     title      = ApexFury.WrapBrand("ApexFury"),
+    icon       = ApexFury.ICON,
     -- wide enough for the longest line, "Status: PENDING: stunned/CC'd
     -- (13.0s since cast)" (cut off at 290, Verify q94-02, 2026-10-01)
     width      = 340,
     height     = 34 + NUM_LINES * 22 + 12,
     strata     = "MEDIUM",
-    toplevel   = false,
     closeButtonInCombat = false,
     persist    = {
       svTable   = GetUIState,

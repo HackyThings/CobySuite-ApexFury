@@ -17,7 +17,7 @@ Blizzard hides Rising Fury from addons, and since 12.1 every aura during combat,
 1. **Dragonrage starts a timer** for your 4th stack: 18 seconds by default (a stack every 6s).
 2. **Empowers inside Dragonrage** (Fire Breath, Eternity Surge) extend it through Animosity. They don't move the alert; they decide whether Dragonrage lasts long enough. With none, it ends too soon and ApexFury stays silent.
 3. **At the 4th-stack moment, the sound plays.**
-4. **Out of combat at that moment?** With Hold the alert until I'm in combat on (the default), it plays when you're back in combat. Once Dragonrage has ended, it plays only with Rising Fury rank 3 and at least your "Skip a held alert with less than" time left; otherwise it is dropped.
+4. **Out of combat at that moment?** With Hold the alert until I'm in combat on (the default), it plays when you're back in combat. Once Dragonrage has ended, it plays only with Rising Fury rank 3 or higher and at least your "Skip a held alert with less than" time left; otherwise it is dropped.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ ApexFury checks your class, spec and talents at login and whenever they change. 
 | **Devastation Evoker** | Dragonrage exists only on Devastation. Other specs and classes switch the alert off; it comes back when you change spec. |
 | **Rising Fury talent (rank 1+)** | Without it, the buff this addon tracks doesn't exist at all. The addon stays off. |
 | **Animosity** | Without it Dragonrage stays at 18 seconds, so you only reach 3 stacks and a 4-stack alert can't play. Set the alert to 3 stacks. |
-| **Rising Fury rank 3** (recommended) | Keeps your stacks 4 seconds each after Dragonrage ends. Without it, alerts play only during Dragonrage. |
+| **Rising Fury rank 3 or higher** (recommended) | Keeps your stacks 4 seconds each after Dragonrage ends. Without it, alerts play only during Dragonrage. |
 
 Edge cases it handles:
 
@@ -70,7 +70,7 @@ After an update, a What's New window lists what changed since the version you la
 
 ## Settings
 
-Open with `/af`, Options > AddOns > ApexFury, or ApexFury in the addon list on the minimap (right-click there shows the overlay). Three pages: Alert, Sound and Advanced. Changes take effect when you press Apply; Cancel or closing the window drops them. Defaults asks first and still needs Apply. Drag the bottom-right corner to resize. After a login or `/reload`, open it out of combat the first time.
+Open with `/af`, Options > AddOns > ApexFury, or ApexFury in the addon list on the minimap (right-click there shows the overlay). Three pages: Alert, Sound and Advanced. Changes take effect when you press Apply; Undo edits or closing the window drops them. Defaults asks first and still needs Apply. Drag the bottom-right corner to resize. After a login or `/reload`, open it out of combat the first time.
 
 **Alert**
 - A status card says whether ApexFury is ready on this character, with tiles for Devastation, Rising Fury and Animosity.
@@ -106,10 +106,10 @@ The default sound is Blizzard's ready check.
 
 `/af overlay` toggles a movable on-screen status window. Seven lines, each with a hover tooltip:
 
-1. **Status.** Idle, counting down, fired, suppressed, or holding (for combat, a vehicle exit and so on, or half a second for a late empower).
-2. **DR remaining.** Dragonrage time left, then the estimated Rising Fury linger. "read" is the game's own timer, taken out of combat after your cast and each empower; it stays until it runs out or you cast an empower. Otherwise it is an estimate.
+1. **Status.** Idle, counting down, fired, suppressed, or holding (for combat, a vehicle exit and so on, or half a second for a late empower). It also says when alerts are off or a sound failed to play.
+2. **DR remain.** Dragonrage time left, then the estimated Rising Fury linger. "read" is the game's own timer, taken out of combat after your cast and each empower; it stays until it runs out or you cast an empower. Otherwise it is an estimate.
 3. **Empowers + stacks.** Empowers this Dragonrage, stacks so far, and in brackets the stacks you'll have when it ends if you cast nothing more. Also shows whether you're in combat.
-4. **Fired after.** Exact seconds from your Dragonrage cast to the moment the sound played. Frozen once the cycle resolves.
+4. **Cycle.** Seconds since your Dragonrage cast, then the exact moment the sound played or the alert was dropped, and why. Frozen once the cycle resolves.
 5. **Last alert.** How long ago the last sound played. Blank after two minutes.
 6. **Verdict.** Whether the alert's timing checks pass right now, or what would stop it. The combat and can-act holds are checked when the moment comes.
 7. **Talent gate.** Whether your spec, Rising Fury rank, and Animosity are good. Tells you why the addon is inactive if it is.
@@ -120,7 +120,7 @@ The default sound is Blizzard's ready check.
 
 - `/af status`. If `Alerts: no`, open `/af`, tick Enable alerts and press Apply.
 - If `Hold until in combat: yes` and you're testing on a target dummy, make sure you actually pulled it (auto-attack on, or just hit it once).
-- Open `/af` > Sound and press Play sample. The line under Play it on says if a game volume setting mutes it. Still silent? Your sound may be from a pack you uninstalled: pick another and press Apply.
+- Open `/af` > Sound and press Play sample. The line under Play it on says if a game volume setting mutes it. If your sound's pack is uninstalled, the alert plays the default sound and the line under your sound says so: reinstall the pack or pick another sound.
 - Still nothing? Try `/af channel master`. The default Dialog channel follows your Dialog Volume slider.
 
 **Alert is firing too late or too early.**
@@ -128,7 +128,7 @@ The default sound is Blizzard's ready check.
 - Open the overlay (`/af overlay`). The Verdict line shows whether the alert's timing checks pass right now, and why not.
 - Verbose mode (`/af`, Advanced, tick Log every cast for bug reports, press Apply) writes every cast and empower to the debug window. `/af debug` opens it.
 
-**It says my spell ID is unknown.**
+**Finding a buff's spell ID.**
 
 - `/af scan` lists every active player buff with its spell ID, and `/af scan fury` filters by name. Run it out of combat and outside Mythic+ or PvP; while the game hides aura data it tells you so instead of listing.
 

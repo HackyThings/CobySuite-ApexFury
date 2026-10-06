@@ -15,6 +15,25 @@ ApexFury.Data = ApexFury.Data or {}
 
 ApexFury.Data.Changelog = {
   {
+    version = "1.0.7",
+    title = "Clearer alert settings and a safer sound",
+    date = "2026-10-06",
+    changed = {
+      "Alert card: warns when the stack you picked can't be reached",
+      "Skip slider: greyed out at Rising Fury rank 1 or 2",
+      "Rank: shows your real Rising Fury rank (\"rank 3 or higher\")",
+      "No-Animosity limit: follows your timing settings",
+      "Overlay: the ApexFury icon, and a Cycle line",
+      "Settings: Cancel is now Undo edits",
+      "Many smaller look and wording improvements",
+    },
+    fixed = {
+      "Missing sound pack: plays the default sound instead of nothing",
+      "Overlay: says when alerts are off or the sound failed",
+      "A held alert that plays late shows as fired right away",
+    },
+  },
+  {
     version = "1.0.6",
     title = "New settings and a minimap entry",
     date = "2026-10-01",

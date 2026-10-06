@@ -93,6 +93,7 @@ local function NewState()
     isEvoker       = false,
     isDevastation  = false,
     risingFuryRank = 0,
+    risingFuryMaxRank = nil,   -- the talent's rank count, when the node says
     hasAnimosity   = false,    -- nil = Animosity not found in the tree yet (unknown)
     apiAvailable   = true,     -- false = talent data still loading (Rising Fury not found)
     usable         = false,    -- isDevastation AND risingFuryRank>=1 AND apiAvailable
@@ -273,14 +274,15 @@ local function ScanForNodes(configID, specID)
 end
 
 ---------------------------------------------------------------------------
--- Read activeRank for a cached node. Returns the rank, or nil when the API
--- has no node info right now (talent data loading).
+-- Read a cached node's active rank, and its rank count
+-- (TraitNodeInfo.maxRanks) when given. Returns nil when the API has no
+-- node info right now (talent data loading).
 ---------------------------------------------------------------------------
 local function ReadNodeRank(configID, nodeID)
   if not configID or not nodeID then return nil end
   local info = traits.GetNodeInfo(configID, nodeID)
   if not info then return nil end
-  return info.activeRank or 0
+  return info.activeRank or 0, type(info.maxRanks) == "number" and info.maxRanks or nil
 end
 
 ---------------------------------------------------------------------------
@@ -302,7 +304,8 @@ local function ComputeReason(s)
       "Rising Fury apex talent not specced: no buff to track."
   elseif s.hasAnimosity == false then
     return "no_animosity",
-      "Animosity not specced: alerts at threshold ≥4 cannot fire (max 3 stacks)."
+      string.format("Animosity not specced: Dragonrage can't be extended, so alerts past stack %d can't fire.",
+        ApexFury.Watcher.StacksWithoutExtension())
   elseif s.hasAnimosity == nil then
     return "ready",
       string.format("Ready: Rising Fury rank %d, Animosity not found yet (assumed).", s.risingFuryRank)
@@ -348,7 +351,8 @@ local function ReadState()
   -- Devastation: read traits API. This is the failure-prone path.
   local configID = traits.GetActiveConfigID()
   local cache = configID and ScanForNodes(configID, s.specID) or nil
-  local rfRank = cache and ReadNodeRank(configID, cache.risingFury)
+  local rfRank, rfMaxRank
+  if cache then rfRank, rfMaxRank = ReadNodeRank(configID, cache.risingFury) end
   if not rfRank then
     LogVerbose("ReadState: talent data incomplete (configID=%s, config=%s, risingFuryNode=%s)",
       tostring(configID), tostring(cache ~= nil), tostring(cache and cache.risingFury))
@@ -359,6 +363,7 @@ local function ReadState()
   end
 
   s.risingFuryRank = rfRank
+  s.risingFuryMaxRank = rfMaxRank
   local animosityRank = ReadNodeRank(configID, cache.animosity)
   if animosityRank then
     s.hasAnimosity = animosityRank > 0
@@ -484,12 +489,13 @@ function EmitTransition(prev, next, isInitial)
         "no buff to track.")
     elseif next.reason == "no_animosity" then
       local threshold = Config.Get(Config.Options.THRESHOLD)
-      if threshold and threshold >= 4 then
+      local reach = ApexFury.Watcher.StacksWithoutExtension()
+      if threshold and threshold > reach then
         Bad("Animosity not specced:",
-          string.format("alerts at threshold %d cannot fire (max 3 stacks).", threshold))
+          string.format("an alert at stack %d can't fire (Dragonrage reaches %d stacks).", threshold, reach))
       else
         Bad("Animosity not specced:",
-          "alerts above 3 stacks impossible.")
+          string.format("alerts past stack %d can't fire.", reach))
       end
     elseif next.reason == "api_unavailable" then
       Bad(TALENT_DATA_KEY, TALENT_DATA_BODY)
@@ -530,12 +536,12 @@ function EmitTransition(prev, next, isInitial)
     elseif next.risingFuryRank > 0 and prev.risingFuryRank == 0 then
       Good("Rising Fury detected",
         string.format("(rank %d).", next.risingFuryRank))
-    elseif next.risingFuryRank < 3 and prev.risingFuryRank == 3 then
-      Warn("Rising Fury rank reduced:",
-        "alerts still fire during Dragonrage. The post-Dragonrage Rising Fury linger requires rank 3.")
-    elseif next.risingFuryRank == 3 and prev.risingFuryRank < 3 then
-      Good("Rising Fury at max rank:",
-        "post-Dragonrage Rising Fury linger active (4s per stack).")
+    elseif next.risingFuryRank < 3 and prev.risingFuryRank >= 3 then
+      Warn(string.format("Rising Fury rank %d:", next.risingFuryRank),
+        "held alerts can't play after Dragonrage. Rank 3 or higher keeps Rising Fury a few seconds longer.")
+    elseif next.risingFuryRank >= 3 and prev.risingFuryRank < 3 then
+      Good(string.format("Rising Fury rank %d:", next.risingFuryRank),
+        "held alerts can still play after Dragonrage while Rising Fury lasts.")
     end
   end
 
@@ -551,13 +557,14 @@ function EmitTransition(prev, next, isInitial)
     else
       local key = prev.hasAnimosity == nil and "Animosity not specced" or "Animosity untalented"
       local threshold = Config.Get(Config.Options.THRESHOLD)
-      if threshold and threshold >= 4 then
+      local reach = ApexFury.Watcher.StacksWithoutExtension()
+      if threshold and threshold > reach then
         Bad(key .. ":",
-          string.format("alerts at threshold %d will be suppressed (max 3 stacks).",
-            threshold))
+          string.format("an alert at stack %d will be skipped (Dragonrage reaches %d stacks).",
+            threshold, reach))
       else
         Bad(key .. ":",
-          "alerts above 3 stacks impossible.")
+          string.format("alerts past stack %d can't fire.", reach))
       end
     end
   end

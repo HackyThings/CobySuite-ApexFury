@@ -1,6 +1,6 @@
 ## Interface: 120100
 ## Title: ApexFury
-## Version: 1.0.6
+## Version: 1.0.7
 ## Author: Cobanyte
 ## OptionalDeps: LibSharedMedia-3.0
 ## Notes: Sound alert at 4 stacks of Rising Fury for Devastation Evokers (Midnight 12.1). Timed from your Dragonrage and empower casts; never reads private auras.

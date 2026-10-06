@@ -42,7 +42,8 @@
 -- (the macro button) and .Cancel. prompt:Ask(text) sets the text, shows the
 -- window and fits its height to the text (110 at least); prompt:SetBody(text)
 -- sets and fits without showing. Used by Recollect's Show Achievement and
--- curator dialogs and by Coby's Currency Searcher's Go to Currency.
+-- curator dialogs, by Coby's Currency Searcher's Go to Currency and by
+-- Coby's Loot Sweeper's track offer.
 ---------------------------------------------------------------------------
 local UI = CobySuite_ApexFury.UI
 local U = CobySuite_ApexFury.Utilities

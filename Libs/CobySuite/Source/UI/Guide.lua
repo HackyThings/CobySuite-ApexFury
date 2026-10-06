@@ -484,17 +484,30 @@ function UI.CreateGuideWindow(opts)
     f.Footer = footer
   end
 
-  local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-  -- The template's bar is the old slider, without ScrollBarMixin's
-  -- SetHideIfUnscrollable. scrollBarHideable makes the template's range
-  -- handler (ScrollFrame_OnScrollRangeChanged) hide the bar while there is
-  -- nothing to scroll and show it again when there is. The template's OnLoad
-  -- ran before the flag was set, so the bar starts hidden here.
-  scroll.scrollBarHideable = true
-  if scroll.ScrollBar then scroll.ScrollBar:Hide() end
+  -- The modern thin bar with its track (MinimalScrollBar, as the sound
+  -- browser and Linkepedia's Stats tab have), not the old slider's two arrow
+  -- buttons and square thumb (Task #239); hidden while nothing scrolls. It
+  -- sits in the INSET_RIGHT room right of the scroll area.
+  local scroll = CreateFrame("ScrollFrame", nil, f)
+  -- the old template enabled the wheel; the bar's init only handles it
+  scroll:EnableMouseWheel(true)
   local child = CreateFrame("Frame", nil, scroll)
   child:SetSize(1, 1)
   scroll:SetScrollChild(child)
+  local bar = CreateFrame("EventFrame", nil, f, "MinimalScrollBar")
+  bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 8, 0)
+  bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 8, 0)
+  if ScrollUtil and ScrollUtil.InitScrollFrameWithScrollBar then
+    ScrollUtil.InitScrollFrameWithScrollBar(scroll, bar)
+  end
+  bar:Hide()
+  scroll:HookScript("OnScrollRangeChanged", function(self, _, range)
+    range = range or 0
+    -- content that shrank keeps the view inside it
+    if self:GetVerticalScroll() > range then self:SetVerticalScroll(range) end
+    bar:SetShown(range > 0)
+  end)
+  scroll.ScrollBar = bar
   f.Scroll, f.Child = scroll, child
 
   f.sections, f.byKey = {}, {}

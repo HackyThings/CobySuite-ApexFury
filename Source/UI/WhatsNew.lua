@@ -30,7 +30,7 @@ end
 
 local changelog = CobySuite_ApexFury.UI.CreateWhatsNewWindow({
   name = "ApexFuryChangelogWindow",
-  title = "ApexFury: What's New",
+  title = ApexFury.WrapBrand("ApexFury") .. ": What's New",
   icon = ApexFury.ICON,
   intro = "What changed in each version of ApexFury, newest first. Click a version to open or close it.",
   footer = "Open this window any time with " .. U.WrapColor(U.Colors.HELP_COMMAND, "/af changelog"),

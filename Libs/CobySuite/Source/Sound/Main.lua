@@ -30,7 +30,7 @@
 --   path    string  filesystem path when known (LSM), for tooltips
 --
 -- Source names (GetSourceList, GetSourceCount, GetSourceCounts) are
--- "Blizzard: <pack>" for each Blizzard pack with sounds and the LSM pack
+-- "Blizzard: <pack>" for each Blizzard pack with sounds, then the LSM pack
 -- names, sorted, with "Other LSM" last. Their counts come from one snapshot
 -- per catalog generation (one SOUNDKIT pass and one LSM pass), so a menu
 -- that asks for every count on every open repeats no scan.
@@ -159,8 +159,8 @@ local function ClassifyBlizzardName(name)
     return "Alert"
   end
 
-  -- UI: interface clicks/popups/menus. Removed generic _OPEN/_CLOSE
-  -- since those overlapped heavily with item/quest/auction sounds.
+  -- UI: interface clicks/popups/menus. Generic _OPEN/_CLOSE are not a marker:
+  -- they overlap heavily with item/quest/auction sounds.
   if name:sub(1, 3) == "UI_"
      or name:sub(1, 3) == "IG_"
      or name:sub(1, 10) == "INTERFACE_"

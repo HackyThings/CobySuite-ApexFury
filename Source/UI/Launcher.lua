@@ -5,9 +5,6 @@
 -- click the overlay. The tooltip is the shared LauncherTooltip shape with a
 -- status line for this character, read when the tooltip opens.
 -------------------------------------------------------------------------------
-local Launcher = {}
-ApexFury.Launcher = Launcher
-
 -- What ApexFury is doing on this character, in a few words
 local function StatusLine()
   local Config = ApexFury.Config
@@ -18,7 +15,7 @@ local function StatusLine()
     if gate.hasAnimosity == nil then return "Ready (Animosity not found yet)" end
     return "Ready"
   elseif reason == "no_animosity" then
-    return "Ready, up to 3 stacks without Animosity"
+    return string.format("Ready, up to %d stacks without Animosity", ApexFury.Watcher.StacksWithoutExtension())
   elseif reason == "wrong_class" or reason == "wrong_spec" or reason == "no_rising_fury" then
     return "Off on this character"
   end
@@ -45,8 +42,6 @@ local launcher = CobySuite_ApexFury.UI.CreateLauncher({
   compartmentTooltipAnchor = "ANCHOR_LEFT",
   tooltip = TooltipOpts,
 })
-Launcher.launcher = launcher
-Launcher._test = { StatusLine = StatusLine, TooltipOpts = TooltipOpts }
 
 function ApexFury_OnAddonCompartmentClick(_, button) launcher:OnCompartmentClick(button) end
 function ApexFury_OnAddonCompartmentEnter(_, menuItem) launcher:OnCompartmentEnter(menuItem) end
