@@ -13,7 +13,7 @@
 --     commands = {
 --       { name = "settings", aliases = { "config" }, help = "Open the settings window",
 --         run = function(rest, input) ... end },
---       { name = "test", usage = "test [suite]", help = "Open the test window", run = function(rest) ... end,
+--       { name = "test", usage = "test [suite]", help = "Open the test dashboard", run = function(rest) ... end,
 --         available = function() return MyAddon.Tests ~= nil end },   -- optional
 --       { usage = "<text>", help = "Search for <text>" },   -- help line only
 --       { section = "Windows" },                            -- help heading only
@@ -166,11 +166,25 @@ end
 --   opts.settings   open or close the settings window
 --   opts.guide      open or close the feature guide
 --   opts.changelog  open or close the What's New changelog
+--   opts.addons     the addon's CobySuite.UI.ToggleAddonsWindow options
+--                   ({ host, slash, icon, message }): "addons" (also other,
+--                   more) opens the list of every addon, the same in each
 --   opts.debug      open or close the debug log window
+--   opts.resetWindows  the addon's UI.ConfirmResetWindows options ({ host,
+--                   title, icon, message, states, windows, onReset }):
+--                   "reset windows" asks first, then puts every window back at
+--                   its default place and size; "reset" with anything else
+--                   prints the usage line (or runs opts.resetBare for a bare
+--                   "reset", an addon's older command that had that name)
 --   opts.tests      function returning the addon's test runner, nil in a
 --                   release build: "test [suite]" exists only while it
---                   returns one
+--                   returns one, and opens the test dashboard on the addon
+--                   (then runs the suite named)
 --   opts.extra      the addon's own commands, placed before test
+--   opts.perf       function returning the addon's Perf instance, nil without
+--                   one: "perf" exists only while it returns one, and opens the
+--                   development window on its Perf tab, on the addon. Release builds strip the addon's
+--                   perf line, so a release never builds this entry.
 -------------------------------------------------------------------------------
 function Slash.StandardCommands(opts)
   local list = {}
@@ -191,20 +205,53 @@ function Slash.StandardCommands(opts)
           help = "Open or close the changelog: what changed in each version",
           run = function() opts.changelog() end })
   end
+  if opts.addons then
+    -- Source/UI/Addons.lua loads after this file, so it is looked up per use
+    Add({ name = "addons", aliases = { "other", "more" },
+          help = "Every addon by Cobanyte, with CurseForge links and pictures",
+          run = function() CobySuite_ApexFury.UI.ToggleAddonsWindow(opts.addons) end })
+  end
   if opts.debug then
     Add({ name = "debug", help = "Open or close the debug log window", run = function() opts.debug() end })
+  end
+  if opts.resetWindows then
+    -- looked up per use, like the addons list: Window.lua and ClickPrompt.lua
+    -- load after this file
+    Add({ name = "reset", usage = "reset windows", help = "Put every window back to its default place and size",
+          run = function(rest)
+            local word = strlower(strtrim(rest or ""))
+            if word == "windows" then
+              CobySuite_ApexFury.UI.ConfirmResetWindows(opts.resetWindows)
+            elseif word == "" and opts.resetBare then
+              opts.resetBare()
+            else
+              local say = opts.resetWindows.message or print
+              say("Usage: reset " .. U.WrapColor(U.Colors.HELP_COMMAND, "windows")
+                .. " puts every window back to its default place and size.")
+            end
+          end })
   end
   for _, def in ipairs(opts.extra or {}) do Add(def) end
   if opts.tests then
     Add({
-      name = "test", usage = "test [suite]", help = "Open the in-game test window, optionally running one suite",
+      name = "test", usage = "test [suite]", help = "Open the test dashboard on this addon, optionally running one suite",
       available = function() return opts.tests() ~= nil end,
       run = function(rest)
         local tests = opts.tests()
         if not tests then return end
-        tests.Window:Show()
+        if tests.Show then tests.Show() end
         local suite = rest and rest:match("^%s*(%S+)")
         if suite then tests.RunSuite(suite) end
+      end,
+    })
+  end
+  if opts.perf then
+    Add({
+      name = "perf", help = "Open the development window on its Perf tab, on this addon: benchmarks, Record and load times",
+      available = function() return opts.perf() ~= nil end,
+      run = function()
+        local perf = opts.perf()
+        if perf and perf.Show then perf.Show() end
       end,
     })
   end

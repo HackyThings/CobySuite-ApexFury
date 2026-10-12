@@ -15,6 +15,16 @@ ApexFury.Data = ApexFury.Data or {}
 
 ApexFury.Data.Changelog = {
   {
+    version = "1.0.8",
+    title = "Reset windows, more addons and a version notice",
+    date = "2026-10-11",
+    new = {
+      "{/af} reset windows: every window back to its default place and size",
+      "{/af} addons: every addon by Cobanyte, with CurseForge links",
+      "Newer version notice: a chat line when someone in your guild or group has a newer version",
+    },
+  },
+  {
     version = "1.0.7",
     title = "Clearer alert settings and a safer sound",
     date = "2026-10-06",

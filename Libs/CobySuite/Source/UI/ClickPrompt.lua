@@ -78,6 +78,7 @@ local function NewPrompt(opts, defaults)
     name = opts.name, title = opts.title, icon = opts.icon, parent = opts.parent,
     width = width, height = height, strata = opts.strata or "DIALOG",
     escapeCloses = opts.name ~= nil, point = opts.point or defaults.point, shown = defaults.shown,
+    transient = true,
   })
   f._promptWidth, f._minHeight = width, height
   f._extraHeight = opts.extraHeight or 0
@@ -178,6 +179,11 @@ end
 --   opts.danger      the title in U.Colors.WARNING_RED, for destructive actions
 --   opts.onHide      function(popup), on every close
 --   opts.strata      default "DIALOG"
+--   opts.fixedPlace  true: it comes up at opts.point (default the parent's
+--                    center) every time it opens, wherever the player dragged
+--                    it last. It never saves a place and is never sized by the
+--                    player, so a standard confirmation always appears in the
+--                    same spot (ConfirmResetWindows below).
 ---------------------------------------------------------------------------
 local DIALOG_WIDTH, DIALOG_BUTTON_W = 320, 110
 
@@ -209,6 +215,9 @@ function UI.CreateDialogPopup(opts)
   })
   -- the text's height is only sure once shown
   popup:HookScript("OnShow", FitHeight)
+  if opts.fixedPlace then
+    popup:HookScript("OnShow", function(self) self:PlaceAtDefault() end)
+  end
 
   popup.Title = popup.TitleText
   if opts.danger and popup.Title then
@@ -240,4 +249,61 @@ function UI.CreateDialogPopup(opts)
     end)
   end
   return popup
+end
+
+---------------------------------------------------------------------------
+-- ConfirmResetWindows(opts): the standard "Reset windows" confirmation that
+-- "/<cmd> reset windows" opens. Asking first, because the reset moves every
+-- window the addon owns (UI.ResetWindows). The same dialog in every addon: a
+-- DIALOG-layer CreateDialogPopup at the center of the screen every time it
+-- opens (fixedPlace), movable, never resizable, never saved, closed by
+-- Cancel, the X or Escape. It is built the first time it is asked for, out of
+-- combat (in combat it opens when combat ends, with a chat line).
+--
+--   opts = the same table UI.ResetWindows takes (states, windows, onReset),
+--   plus host (a key for the dialog's name), title (the addon's display name),
+--   icon and message (the addon's chat printer)
+---------------------------------------------------------------------------
+local resetDialogs = {}   -- host -> dialog
+
+function UI.ConfirmResetWindows(opts)
+  local host = opts.host or "?"
+  local dialog = resetDialogs[host]
+  if dialog then
+    dialog._resetOpts = opts
+    dialog:Show()
+    return dialog
+  end
+  if InCombatLockdown() and opts.message then
+    opts.message("The window reset opens when combat ends.")
+  end
+  U.RunOutOfCombat(function()
+    if resetDialogs[host] then return end
+    local d
+    d = UI.CreateDialogPopup({
+      name = host .. "ResetWindowsDialog",
+      title = "Reset windows",
+      icon = opts.icon,
+      body = "Put every " .. (opts.title or host) .. " window back at its default place and size? "
+        .. "Your settings stay as they are.",
+      confirmText = "Reset Windows", cancelText = "Cancel",
+      point = { "CENTER", UIParent, "CENTER", 0, 0 },
+      fixedPlace = true, hidden = true,
+      onConfirm = function()
+        local current = d._resetOpts
+        local _, waiting = UI.ResetWindows(current)
+        local say = current.message
+        if not say then return end
+        if waiting > 0 then
+          say("Every window is back at its default place and size, except " .. waiting
+            .. " that move when combat ends.")
+        else
+          say("Every window is back at its default place and size.")
+        end
+      end,
+    })
+    d._resetOpts = opts
+    resetDialogs[host] = d
+    d:Show()
+  end, "reset-windows:" .. host)
 end

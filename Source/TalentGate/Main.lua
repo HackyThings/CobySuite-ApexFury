@@ -109,6 +109,7 @@ local previousEmittedState  -- snapshot used to detect actual transitions
 local nodeCache = {}        -- ["specID:configID"] = { animosity = nodeID, risingFury = nodeID }, found IDs only
 local retryGeneration = 0   -- bumped by every fresh evaluation; older retry chains stop
 local initialPending = false  -- a PLAYER_LOGIN evaluation has not committed yet
+local retryPending = false    -- a retry of incomplete talent data is scheduled (kept through the test Save / Restore)
 local invalidatePending = false  -- a spec or talent-group change is in the debounced burst
 local scanCount = 0         -- tree walks started, for the suite
 
@@ -599,7 +600,7 @@ end
 -- then on, and a login evaluation that has not committed yet keeps its
 -- first-login message through the evaluations that replace it.
 ---------------------------------------------------------------------------
-local function Evaluate(opts)
+function TalentGate.Evaluate(opts)
   opts = opts or {}
   local attempt = opts.attempt or 0
   if attempt == 0 then
@@ -610,16 +611,21 @@ local function Evaluate(opts)
   local prev = previousEmittedState
   local next, incomplete = ReadState()
 
+  -- Cleared here and set again only where a retry is scheduled, so a complete
+  -- reading or the last retry leaves it clear; committing a state with only
+  -- Animosity missing keeps it set, since its retries are still running
+  retryPending = false
   if incomplete then
     local missing = next.apiAvailable and "Animosity not found" or "Rising Fury not found"
     if attempt < #RETRY_DELAYS then
       local delay = RETRY_DELAYS[attempt + 1]
       local generation = retryGeneration
+      retryPending = true
       LogVerbose("Talent data incomplete (%s): retry %d of %d in %ds",
         missing, attempt + 1, #RETRY_DELAYS, delay)
       After(delay, function()
         if generation ~= retryGeneration then return end   -- a newer evaluation owns the retries
-        Evaluate({ attempt = attempt + 1 })
+        TalentGate.Evaluate({ attempt = attempt + 1 })
       end)
       -- Rising Fury missing: keep the current state until a retry finds it
       if not next.apiAvailable then return end
@@ -669,7 +675,7 @@ local debouncedEval = CobySuite_ApexFury.Utilities.Debounce(TRAIT_DEBOUNCE_SEC, 
     LogVerbose("Node cache wiped (spec or talent group changed in this burst)")
   end
 
-  Evaluate()
+  TalentGate.Evaluate()
 end)
 
 local function ScheduleDebouncedEval(reason)
@@ -695,14 +701,14 @@ local function OnEvent(_, event, ...)
     -- ReadState handles the nil case via the retry path, but starting
     -- one tick later avoids a guaranteed-redundant first read.
     After(0.1, function()
-      Evaluate({ isInitial = true })
+      TalentGate.Evaluate({ isInitial = true })
     end)
 
   elseif event == "PLAYER_ENTERING_WORLD" then
     -- Zone change. State usually unchanged; silent re-eval but emit on
     -- actual transitions.
     LogVerbose("PLAYER_ENTERING_WORLD: silent re-evaluation")
-    Evaluate({})
+    TalentGate.Evaluate({})
 
   elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
     Debug.Log("TALENTGATE", "PLAYER_SPECIALIZATION_CHANGED: debounced re-eval")
@@ -742,7 +748,7 @@ function TalentGate.Start()
   -- PLAYER_LOGIN branch would do).
   if IsLoggedIn and IsLoggedIn() then
     After(0.1, function()
-      Evaluate({ isInitial = true })
+      TalentGate.Evaluate({ isInitial = true })
     end)
   end
 end
@@ -764,7 +770,7 @@ TalentGate._test = {
   GetCacheEntry = function(specID, configID) return nodeCache[CacheKey(specID, configID)] end,
   HandleEvent = function(event, ...) OnEvent(nil, event, ...) end,
   FlushDebounce = function() debouncedEval:Flush() end,
-  Evaluate = Evaluate,
+  Evaluate = TalentGate.Evaluate,
 
   -- The module's state, to put back with Restore after the suite
   Save = function()
@@ -773,6 +779,7 @@ TalentGate._test = {
       previous = previousEmittedState,
       cache = nodeCache,
       initialPending = initialPending,
+      retryPending = retryPending,
       invalidatePending = invalidatePending,
       debouncePending = debouncedEval:IsPending(),
       debounceReason = invalidatePending and "ACTIVE_TALENT_GROUP_CHANGED" or "TRAIT_CONFIG_UPDATED",
@@ -786,7 +793,19 @@ TalentGate._test = {
     nodeCache = saved.cache
     initialPending = saved.initialPending
     invalidatePending = saved.invalidatePending
+    retryPending = saved.retryPending or false
     if saved.debouncePending then debouncedEval:Call(saved.debounceReason) end
+    if retryPending then
+      -- the saved evaluation's retries went stale with the generation bump
+      -- above; one fresh evaluation takes over after the first delay, never
+      -- inside Restore (a suite's fakes may still be in place), and gives way
+      -- to any newer evaluation
+      local generation = retryGeneration
+      After(RETRY_DELAYS[1], function()
+        if generation ~= retryGeneration then return end
+        TalentGate.Evaluate({})
+      end)
+    end
   end,
   -- A module that has never evaluated: no state, cache, retries or burst
   Reset = function()
@@ -796,7 +815,10 @@ TalentGate._test = {
     previousEmittedState = nil
     nodeCache = {}
     initialPending = false
+    retryPending = false
     invalidatePending = false
     scanCount = 0
   end,
+  -- A retry of incomplete talent data is scheduled (Perf's Busy() refuses to start)
+  IsRetryPending = function() return retryPending end,
 }

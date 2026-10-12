@@ -4,6 +4,14 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-10-11
+
+### Added
+
+- **Reset windows.** `/af reset windows` puts every window back to its default place and size after you confirm; your settings are not touched.
+- **Other addons by the same author.** `/af addons` lists every addon Cobanyte has released, the same list in each of them: what it does, pictures you can click to see bigger, and its CurseForge link to copy into your browser. Addons you already have are marked. It only opens when you ask, and the guide's last section points to it. The list remembers its size and where you left it.
+- **Newer version notice.** When someone in your guild or group has a newer version of ApexFury, one line in chat says which version is out and which one you have. Your copy shares its version with them quietly, so they hear about a newer one from you too. On by default; turn it off with "Tell me when a newer version is out" in `/af settings` (Alert).
+
 ## [1.0.7] - 2026-10-06
 
 ### Changed
@@ -115,7 +123,8 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 Initial release of ApexFury.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.8
 [1.0.7]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.7
 [1.0.6]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.6
 [1.0.5]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.5

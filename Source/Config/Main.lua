@@ -49,6 +49,7 @@ local base = CobySuite_ApexFury.Config.New({
     SOUND_CHANNEL    = "sound_channel",    -- WoW audio channel: "Dialog" (default), "Master" or "SFX" (ApexFury.SOUND_CHANNELS)
     ENABLED          = "enabled",
     VERBOSE          = "verbose",
+    VERSION_CHECK    = "version_check",    -- share the version with guild and group, a chat line when a newer one is out
   },
   defaults = {
     ["spell_id"]         = 375087, -- Dragonrage (Devastation Evoker trigger)
@@ -71,6 +72,7 @@ local base = CobySuite_ApexFury.Config.New({
     ["sound_channel"]    = "Dialog",
     ["enabled"]          = true,
     ["verbose"]          = false,
+    ["version_check"]    = true,
   },
   -- Set refuses a failing value and InitializeData puts the default back for
   -- a failing saved one (a hand-edited or damaged file). The ranges are the
@@ -92,6 +94,7 @@ local base = CobySuite_ApexFury.Config.New({
     ["sound_channel"]      = { type = "string", values = ApexFury.SOUND_CHANNELS },
     ["enabled"]            = { type = "boolean" },
     ["verbose"]            = { type = "boolean" },
+    ["version_check"]      = { type = "boolean" },
   },
   debug = ApexFury.Debug,
   onSet = function(name, old, value)

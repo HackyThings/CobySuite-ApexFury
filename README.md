@@ -6,13 +6,13 @@
 
 Sound alert at 4 stacks of Rising Fury for Devastation Evokers in WoW Midnight (12.1).
 
-It plays a sound the instant your 4th stack lands, so the trinket window stops being a guess.
+It times your 4th stack and sounds an alert for your trinket window.
 
-## The Problem
+## The problem
 
 Blizzard hides Rising Fury from addons, and since 12.1 every aura during combat, encounters, Mythic+ and PvP. ApexFury never reads your stacks: it times your Dragonrage cast and your empowers, then plays the sound the moment your 4th stack would land.
 
-## How It Works
+## How it works
 
 1. **Dragonrage starts a timer** for your 4th stack: 18 seconds by default (a stack every 6s).
 2. **Empowers inside Dragonrage** (Fire Breath, Eternity Surge) extend it through Animosity. They don't move the alert; they decide whether Dragonrage lasts long enough. With none, it ends too soon and ApexFury stays silent.
@@ -44,13 +44,15 @@ Edge cases it handles:
 
 **Manual:** Drop the `ApexFury` folder into your `Interface/AddOns/`. No dependencies.
 
-## Slash Commands
+## Slash commands
 
 ```
 /af settings - Open or close the settings window
 /af guide - Open or close the feature guide
 /af changelog - Open or close the changelog: what changed in each version
+/af addons - Every addon by Cobanyte, with CurseForge links and pictures (also /af other, /af more)
 /af debug - Open or close the debug log window
+/af reset windows - Put every window back to its default place and size
 /af status - Print the current settings and the talent check to chat
 /af scan [name] - List active player buffs (find spell IDs)
 /af overlay - Open or close the on-screen status overlay
@@ -62,35 +64,36 @@ Edge cases it handles:
 
 `/af` alone opens the settings. `/apex` and `/apexfury` work too.
 
-## Guide and What's New
+## Guide and what's new
 
 The first time you log in, the guide opens: a short tour in the order you'll need it. Click a heading to open or close it; `/af guide` or the Guide button in the settings reopens it.
 
-After an update, a What's New window lists what changed since the version you last played. `/af changelog` opens it any time.
+After an update, a What's new window lists what changed since the version you last played. `/af changelog` opens it any time.
 
 ## Settings
 
-Open with `/af`, Options > AddOns > ApexFury, or ApexFury in the addon list on the minimap (right-click there shows the overlay). Three pages: Alert, Sound and Advanced. Changes take effect when you press Apply; Undo edits or closing the window drops them. Defaults asks first and still needs Apply. Drag the bottom-right corner to resize. After a login or `/reload`, open it out of combat the first time.
+Open with `/af`, Options > AddOns > ApexFury, or ApexFury in the addon list on the minimap (right-click there shows the overlay). Three pages: Alert, Sound and Advanced. Changes take effect when you press Apply; Undo Edits or closing the window drops them. Defaults asks first and still needs Apply. Drag the bottom-right corner to resize. After a login or `/reload`, open it out of combat the first time.
 
 **Alert**
 - A status card says whether ApexFury is ready on this character, with tiles for Devastation, Rising Fury and Animosity.
 - Enable alerts (on by default)
-- The stack to alert at, as tiles showing the time after your cast (default 4, +18s), with a timeline of the predicted alert and Play sample.
+- The stack to alert at, as tiles showing the time after your cast (default 4, +18s), with a timeline of the predicted alert and Play Sample.
 - Hold the alert until I'm in combat (on by default; an alert that comes out of combat waits for combat)
 - Hold the alert until I can act (on by default; waits while you're in a vehicle, mounted, possessed, or stunned/CC'd; plays when you can act again)
 - Skip a held alert with less than (default 2s of Rising Fury left)
+- Tell me when a newer version is out (on by default; one chat line when a newer ApexFury is out)
 
 **Sound**
 
-Play sample plays your sound the way the alert will. "Play it on" picks the channel: Dialog (the default, nearly empty in combat), Master or Sound effects. The line under it says when a game setting mutes the alert.
+Play Sample plays your sound the way the alert will. "Play it on" picks the channel: Dialog (the default, nearly empty in combat), Master or Sound effects. The line under it says when a game setting mutes the alert.
 
 Type to search the list. Filter by source. Click any row to hear it on your chosen channel and pick it, then press Apply.
 
 **Advanced**
-- The timing numbers ApexFury uses, locked until you press Edit timing overrides. Restore addon timing defaults puts them back.
-- Show overlay, Open debug log, and Log every cast for bug reports (off by default; records every cast and empower to the debug window).
+- The timing numbers ApexFury uses, locked until you press Edit Timing Overrides. Restore Addon Timing Defaults puts them back.
+- Show Overlay, Open Debug Log, and Log every cast for bug reports (off by default; records every cast and empower to the debug window).
 
-## Library Support
+## Library support
 
 ApexFury picks up sounds from whatever you already have. No config required.
 
@@ -98,7 +101,7 @@ ApexFury picks up sounds from whatever you already have. No config required.
 |---|---|
 | Built-in game sounds (always on) | Hundreds of in-game sounds, auto-categorized into UI / Combat / Voice / Item / Alert / Effect |
 | Sound packs, through LibSharedMedia-3.0 (optional) | Every shared sound from your installed addons, filterable by pack. |
-| Leatrix Sounds (optional) | About 275,000 sounds. Press *Open Leatrix*, click a row in its list, press *Use the sound I clicked*, then Apply. They don't show in ApexFury's search. |
+| Leatrix Sounds (optional) | About 275,000 sounds. Press *Open Leatrix*, click a row in its list, press *Use the Sound I Clicked*, then Apply. They don't show in ApexFury's search. |
 
 The default sound is Blizzard's ready check.
 
@@ -120,7 +123,7 @@ The default sound is Blizzard's ready check.
 
 - `/af status`. If `Alerts: no`, open `/af`, tick Enable alerts and press Apply.
 - If `Hold until in combat: yes` and you're testing on a target dummy, make sure you actually pulled it (auto-attack on, or just hit it once).
-- Open `/af` > Sound and press Play sample. The line under Play it on says if a game volume setting mutes it. If your sound's pack is uninstalled, the alert plays the default sound and the line under your sound says so: reinstall the pack or pick another sound.
+- Open `/af` > Sound and press Play Sample. The line under Play it on says if a game volume setting mutes it. If your sound's pack is uninstalled, the alert plays the default sound and the line under your sound says so: reinstall the pack or pick another sound.
 - Still nothing? Try `/af channel master`. The default Dialog channel follows your Dialog Volume slider.
 
 **Alert is firing too late or too early.**
@@ -136,7 +139,7 @@ The default sound is Blizzard's ready check.
 
 GPL-2.0. See [LICENSE](LICENSE).
 
-## Issues / Feedback
+## Issues / feedback
 
 Found a bug? Tick **Log every cast for bug reports** in `/af` > **Advanced**, reproduce it, then run `/af debug`, press **Copy Last 250** and send the text with a line about what you were doing. The log holds the addon version, your WoW build and your settings.
 

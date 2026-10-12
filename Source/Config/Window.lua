@@ -3,16 +3,17 @@
 --
 -- The suite's standard settings window (CobySuite.UI.CreateSettingsWindow):
 -- a sidebar with Alert, Sound and Advanced, staged edits that Apply writes
--- through Config.Set, Undo edits, Defaults and the Guide button (the standard
+-- through Config.Set, Undo Edits, Defaults and the Guide button (the standard
 -- footer). The addon is also listed under Options > AddOns with a button
 -- that opens this window (CobySuite.UI.RegisterSettingsCategory).
 --
 -- Alert: a read-only status card (the talent gate's reading, in words and
--- tiles), Enable alerts, the stack tiles with a predicted timeline, and the
--- hold rules. Sound: the selected sound with Play sample, the audio channel
--- with an audibility check (the game's sound CVars), the optional Leatrix
--- Sounds row and an embedded CobySuite.UI.SoundBrowser. Advanced: the timing
--- model's numbers, read only until "Edit timing overrides", and the overlay,
+-- tiles), Enable alerts, the stack tiles with a predicted timeline, the
+-- hold rules, and the suite's version check (its Updates section).
+-- Sound: the selected sound with Play Sample, the audio channel with an
+-- audibility check (the game's sound CVars), the optional Leatrix Sounds
+-- row and an embedded CobySuite.UI.SoundBrowser. Advanced: the timing
+-- model's numbers, read only until "Edit Timing Overrides", and the overlay,
 -- debug log and verbose logging.
 --
 -- Every preview reads the staged values (window:Get) and never calls
@@ -405,7 +406,7 @@ local function BuildTimeline(box)
   box.MarkerText = box:CreateFontString(nil, "OVERLAY", Fonts.SMALL)
 
   box.Play = UI.CreateButton(box, {
-    size = { 100, 22 }, text = "Play sample",
+    size = { 100, 22 }, text = "Play Sample",
     point = { "RIGHT", box, "RIGHT", -8, 0 },
     tooltip = "Play your alert sound on the audio channel you picked under Sound.",
     onClick = function()
@@ -565,7 +566,7 @@ local function BuildHold(panel)
     enabledWhen = function(get) return EitherHold(get) and not LowRank(Gate()) end,
   }
   panel:Note{
-    text = "Your Rising Fury rank ends the buff with Dragonrage, so a held alert never plays after it. Rank 3 or higher keeps it a few seconds longer.",
+    text = "At your Rising Fury rank the buff ends with Dragonrage, so a held alert never plays after it. Rank 3 or higher keeps it a few seconds longer.",
     visibleWhen = function() return LowRank(Gate()) end,
   }
   panel:Note{
@@ -585,6 +586,7 @@ local function BuildAlert(panel, win)
   BuildStatus(panel, win)
   BuildStacks(panel, win)
   BuildHold(panel)
+  CobySuite_ApexFury.VersionCheck.AddSettingsRows(panel, Opt.VERSION_CHECK)
 end
 
 -------------------------------------------------------------------------------
@@ -668,7 +670,7 @@ local function BuildSoundCard(panel, win, getBrowser)
     build = function(row)
       local mid = -SOUND_CARD_H / 2
       row.Play = UI.CreateButton(row, {
-        size = { 120, 26 }, text = "Play sample",
+        size = { 120, 26 }, text = "Play Sample",
         point = { "LEFT", row, "TOPLEFT", pad, mid },
         tooltip = "Play this sound on the audio channel picked below, the way the alert plays it.",
         onClick = function()
@@ -800,7 +802,7 @@ local function BuildLeatrix(panel, stageSound)
       label:SetText("Leatrix Sounds:")
       row.Label = label
       UI.AddTooltip(label,
-        "Open Leatrix Sounds, click any sound in its list, then come back and press Use the sound I clicked.",
+        "Open Leatrix Sounds, click any sound in its list, then come back and press Use the Sound I Clicked.",
         "ANCHOR_RIGHT")
 
       row.OpenButton = UI.CreateButton(row, {
@@ -813,13 +815,13 @@ local function BuildLeatrix(panel, stageSound)
 
       row.GrabButton = UI.CreateButton(row, {
         size  = { 170, 22 },
-        text  = "Use the sound I clicked",
+        text  = "Use the Sound I Clicked",
         point = { "LEFT", row.OpenButton, "RIGHT", 6, 0 },
         tooltip = "Use the sound you last clicked in Leatrix Sounds. Press Apply to keep it.",
         onClick = function()
           local path, fdid = ApexFury.Leatrix.GrabSelected()
           if not fdid then
-            ApexFury.Message("|cFFFFAA00Click a sound in the Leatrix list first, then press Use the sound I clicked.|r")
+            ApexFury.Message("|cFFFFAA00Click a sound in the Leatrix list first, then press Use the Sound I Clicked.|r")
             return
           end
           -- Going INTO a Leatrix sound never needs the replace confirmation
@@ -1002,13 +1004,13 @@ end
 
 local function BuildTimingLock(panel, win)
   panel:Button{
-    text = "Edit timing overrides", width = 200,
+    text = "Edit Timing Overrides", width = 200,
     tooltip = "Unlock the numbers below. They lock again when the window closes.",
     onClick = function()
       editTiming = not editTiming
     end,
     refresh = function(row)
-      row.Button:SetText(editTiming and "Lock timing overrides" or "Edit timing overrides")
+      row.Button:SetText(editTiming and "Lock Timing Overrides" or "Edit Timing Overrides")
     end,
   }
   win:HookScript("OnHide", function() editTiming = false end)
@@ -1055,7 +1057,7 @@ local function BuildTiming(panel, win)
     function(v) return v >= 0 and v <= 60 end)
 
   panel:Button{
-    text = "Restore addon timing defaults", width = 220,
+    text = "Restore Addon Timing Defaults", width = 220,
     tooltip = "Put these five numbers back to ApexFury's own values. Press Apply to keep them.",
     onClick = RestoreTimingDefaults,
     enabledWhen = AnyTimingChanged,
@@ -1079,25 +1081,25 @@ end
 local function BuildTroubleshooting(panel)
   panel:Section("Troubleshooting", { icon = ICONS .. "INV_Misc_Spyglass_02" })
   panel:Button{
-    text = "Show overlay", width = 200, icon = ICONS .. "INV_Misc_Spyglass_02",
+    text = "Show Overlay", width = 200, icon = ICONS .. "INV_Misc_Spyglass_02",
     tooltip = "Show or hide the overlay. Takes effect at once, outside Apply.",
     description = "A small live readout: the timer, Dragonrage time left, your empowers, and why the alert played, waited or was skipped.",
     onClick = function()
       if ApexFury.Overlay and ApexFury.Overlay.Toggle then ApexFury.Overlay.Toggle() end
     end,
     refresh = function(row)
-      row.Button:SetText(OverlayShown() and "Hide overlay" or "Show overlay")
+      row.Button:SetText(OverlayShown() and "Hide Overlay" or "Show Overlay")
     end,
   }
   panel:Button{
-    text = "Open debug log", width = 200, icon = ICONS .. "INV_Misc_Note_01",
+    text = "Open Debug Log", width = 200, icon = ICONS .. "INV_Misc_Note_01",
     tooltip = "Open or close the debug log.",
     description = "The log to copy into a bug report.",
     onClick = function()
       if ApexFury.DebugWindow then ApexFury.DebugWindow:Toggle() end
     end,
     refresh = function(row)
-      row.Button:SetText(DebugLogShown() and "Close debug log" or "Open debug log")
+      row.Button:SetText(DebugLogShown() and "Close Debug Log" or "Open Debug Log")
     end,
   }
   panel:Checkbox{

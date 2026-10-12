@@ -5,7 +5,7 @@
 -- categories (left out when there is only one), a scrolling panel per
 -- category with gold section headers over thin dividers, labels on the left
 -- and inputs aligned on the right, grey description lines, and a bottom bar
--- with Defaults on the left and Apply and Undo edits on the right.
+-- with Defaults on the left and Apply and Undo Edits on the right.
 --
 -- Edits are staged. Apply writes every staged value through Config.Set in
 -- one go; Cancel, closing the window and opening it again all drop them.
@@ -1356,7 +1356,7 @@ function Panel:Keybind(o)
     row.Label:SetWidth(CaptureX(rowWidth) - PAD - indent - 8)
   end
 
-  -- "Alt+W", "Alt+Left Click": as the addons word keys elsewhere (U.FormatKeyText)
+  -- "Alt+W", "Alt-click": as the addons word keys elsewhere (U.FormatKeyText)
   local function Text(value)
     if not value then return "Not Set" end
     return U.FormatKeyText(value)
@@ -3400,7 +3400,7 @@ function UI.CreateSettingsWindow(opts)
   window.DefaultsPopup = UI.CreateDialogPopup({
     name = opts.name .. "DefaultsPopup",
     icon = opts.icon,
-    title = "Reset to Defaults?",
+    title = "Reset to defaults?",
     width = 340,
     height = 130,
     parent = window,
@@ -3430,7 +3430,7 @@ function UI.CreateSettingsWindow(opts)
   end
   -- Clear of the resize grip in the corner
   window.CancelButton = UI.CreateButton(window, {
-    size = { FOOTER_BUTTON_W, FOOTER_BUTTON_H }, text = "Undo edits",
+    size = { FOOTER_BUTTON_W, FOOTER_BUTTON_H }, text = "Undo Edits",
     tooltip = "Undo the changes you haven't applied yet. The window stays open.",
     point = { "BOTTOMRIGHT", window.ResizeGrip and -22 or -12, 12 },
     onClick = function() window:Cancel() end,

@@ -33,6 +33,7 @@
 --       fixedSize = true,                      -- ignore a saved size
 --     },
 --     point = { "CENTER", UIParent, "CENTER", 0, 80 },   -- initial anchor for a window without persist
+--     transient = true,                        -- an asking dialog: kept out of UI.ListWindows (no reset)
 --     mixin = MyWindowMixin,                   -- optional, applied before anything else
 --     onDragStop = function(f) end,            -- optional, after the state is saved
 --     onResizeStop = function(f) end,          -- optional, likewise after a resize
@@ -49,7 +50,10 @@
 --   client while the drag keeps growing it, so it ran away to its largest
 --   size with its grip off the screen (the curator console, 2026-09-30).
 --   f:SaveState()      f:RestoreState()      f:FitToBounds()      f:Toggle()
+--   f:ResetState()     the saved place and size cleared, the window back at its default
 --   CobySuite.UI.IsSuiteWindow(frame)   true for a frame this built
+--   CobySuite.UI.ResetWindows(opts)     every window of one addon back at its default
+--   CobySuite.UI.ListWindows()          every window this built that a reset covers
 --
 -- Escape: UISpecialFrames is the standard path (CloseSpecialWindows calls
 -- Hide() directly, so it works in combat). The OnKeyDown +
@@ -87,6 +91,56 @@ function WindowMixin:RestoreState()
     self:SetSize(self._width, self._height)
   end
   self:FitToBounds()
+end
+
+-- The fields SaveWindowState writes: a window's place and size, and nothing
+-- else an addon keeps in the same record (ApexFury's overlay keeps whether it
+-- is shown there)
+local GEOMETRY_FIELDS = { "point", "relativePoint", "x", "y", "width", "height" }
+
+-- Removes the place and size from sv[key] and the record itself when nothing
+-- else is left in it, so the window takes the same path as on a fresh
+-- install. True when there was anything to remove.
+local function ClearGeometry(sv, key)
+  local record = type(sv) == "table" and sv[key] or nil
+  if type(record) ~= "table" then return false end
+  local cleared = false
+  for _, field in ipairs(GEOMETRY_FIELDS) do
+    if record[field] ~= nil then
+      record[field] = nil
+      cleared = true
+    end
+  end
+  if next(record) == nil then sv[key] = nil end
+  return cleared
+end
+
+-- A saved window record, as SaveWindowState writes it, wherever it sits in
+-- the SavedVariable (a window not built yet has no frame to ask)
+local function IsWindowRecord(record)
+  return type(record) == "table" and record.point ~= nil and record.relativePoint ~= nil
+end
+
+-- Puts the window at its default place, and at its declared size when it can
+-- be sized (a resizable window, or one with a fixed size); the size of any
+-- other window follows its content
+function WindowMixin:PlaceAtDefault()
+  local p = self._defaultPoint
+  self:ClearAllPoints()
+  self:SetPoint(p[1], p[2], p[3], p[4], p[5])
+  local persist = self._persist
+  if self._bounds or (persist and persist.fixedSize) then
+    self:SetSize(self._width, self._height)
+  end
+  self:FitToBounds()
+end
+
+-- Clears the window's saved place and size and moves it back at once, shown
+-- or not. Nothing else in the window changes.
+function WindowMixin:ResetState()
+  local persist = self._persist
+  if persist then ClearGeometry(ResolveSV(persist), persist.key) end
+  self:PlaceAtDefault()
 end
 
 -- ScreenSize(f): the screen's width and height in f's own units, or nil
@@ -137,6 +191,17 @@ function UI.IsSuiteWindow(frame)
   return frame ~= nil and built[frame] == true
 end
 
+-- Every window a reset covers (the asking dialogs are `transient` and
+-- reopen at their own place): the offline tests read it to prove that no
+-- window of an addon escapes its reset
+function UI.ListWindows()
+  local list = {}
+  for frame in pairs(built) do
+    if not frame._transient then list[#list + 1] = frame end
+  end
+  return list
+end
+
 function UI.CreateWindow(opts)
   opts = opts or {}
   local f = CreateFrame("Frame", opts.name, opts.parent or UIParent, opts.template or "BasicFrameTemplateWithInset")
@@ -147,6 +212,7 @@ function UI.CreateWindow(opts)
   f._width = opts.width or 400
   f._height = opts.height or 300
   f._persist = opts.persist
+  f._transient = opts.transient
   f:SetSize(f._width, f._height)
   -- Initial anchor: opts.point (a SetPoint argument list) for a window that
   -- does not persist, otherwise the persist defaults, otherwise CENTER.
@@ -155,6 +221,16 @@ function UI.CreateWindow(opts)
   else
     local d = opts.persist and opts.persist.defaults or {}
     f:SetPoint(d.point or "CENTER", UIParent, d.relPoint or "CENTER", d.x or 0, d.y or 0)
+  end
+  -- The default place a reset returns to: what RestoreState falls back to
+  -- (persist's defaults), else the initial anchor, else the screen's center
+  local d = opts.persist and opts.persist.defaults
+  if d then
+    f._defaultPoint = { d.point or "CENTER", UIParent, d.relPoint or "CENTER", d.x or 0, d.y or 0 }
+  elseif opts.point then
+    f._defaultPoint = { unpack(opts.point) }
+  else
+    f._defaultPoint = { "CENTER", UIParent, "CENTER", 0, 0 }
   end
   -- MEDIUM with Blizzard's panels (the achievement and character windows
   -- are MEDIUM and toplevel): a click raises whichever window it lands on,
@@ -300,6 +376,94 @@ function UI.CreateWindow(opts)
 
   if not opts.shown then f:Hide() end
   return f
+end
+
+---------------------------------------------------------------------------
+-- UI.ResetWindows: every window of one addon back at its default place and
+-- size ("/<cmd> reset windows", after its confirmation)
+--
+--   CobySuite.UI.ResetWindows({
+--     states  = { function() return MY_ADDON_WINDOW_STATE end },  -- the addon's window-state
+--                                         -- SavedVariables (tables or functions returning them)
+--     windows = function() return { MyAddon.StepPanel } end,      -- optional: windows built
+--                                         -- without persist (a list, or a function returning one)
+--     onReset = function() end,           -- optional: a window CreateWindow did not build
+--   })   -- returns how many windows moved and how many wait for combat to end
+--
+-- The windows are found through the window-state SavedVariable they already
+-- save into, which every suite window of an addon shares, so a window cannot
+-- be missed by a list that was not kept up to date:
+--  * a window built now (shown or not) whose persist table is one of
+--    `states` has its saved place and size cleared and is moved and sized at
+--    once, with no /reload;
+--  * a window not built yet (lazy) has no frame, so every saved window record
+--    in each state table (one with point and relativePoint, as
+--    SaveWindowState writes it) loses its place and size, and the window
+--    comes up at its default when it is built;
+--  * only the six geometry fields go, and a record with other fields keeps
+--    them. Settings, filters, tabs, column widths, a minimap angle and every
+--    other entry of the table are untouched.
+-- A window with no persist saves nothing and is not found by its table: it
+-- goes in `windows`. A window that a locked-down client cannot move (a
+-- protected one, in combat) is moved when combat ends.
+---------------------------------------------------------------------------
+local function ResolveState(state)
+  if type(state) == "function" then state = state() end
+  return type(state) == "table" and state or nil
+end
+
+local function ListOf(value)
+  if type(value) == "function" then value = value() end
+  return type(value) == "table" and value or {}
+end
+
+function UI.ResetWindows(opts)
+  opts = opts or {}
+  local states = {}
+  for _, state in ipairs(opts.states or {}) do
+    local sv = ResolveState(state)
+    if sv then states[sv] = true end
+  end
+
+  -- the windows to move: built ones saving into these tables, then the
+  -- addon's own list, each once
+  local targets, seen = {}, {}
+  local function Add(frame)
+    if type(frame) == "table" and not seen[frame] and (frame.PlaceAtDefault or frame.ResetState) then
+      seen[frame] = true
+      targets[#targets + 1] = frame
+    end
+  end
+  for frame in pairs(built) do
+    local persist = frame._persist
+    if persist and not frame._transient and states[ResolveSV(persist)] then Add(frame) end
+  end
+  for _, frame in ipairs(ListOf(opts.windows)) do Add(frame) end
+
+  -- every saved window record, built or not
+  for sv in pairs(states) do
+    local keys = {}
+    for key, record in pairs(sv) do
+      if IsWindowRecord(record) then keys[#keys + 1] = key end
+    end
+    for _, key in ipairs(keys) do ClearGeometry(sv, key) end
+  end
+
+  local moved, waiting = 0, 0
+  for _, frame in ipairs(targets) do
+    local function Move()
+      if frame.ResetState then frame:ResetState() else frame:PlaceAtDefault() end
+    end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+      waiting = waiting + 1
+      U.RunOutOfCombat(Move, frame)
+    else
+      Move()
+      moved = moved + 1
+    end
+  end
+  if opts.onReset then opts.onReset() end
+  return moved, waiting
 end
 
 ---------------------------------------------------------------------------

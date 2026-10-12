@@ -204,7 +204,8 @@ end
 ---------------------------------------------------------------------------
 -- Versions, key bindings and command lines as a player reads them
 ---------------------------------------------------------------------------
-local BUTTON_WORDS = { BUTTON1 = "Left Click", BUTTON2 = "Right Click", BUTTON3 = "Middle Click" }
+local CLICK_ALONE = { BUTTON1 = "Left-click", BUTTON2 = "Right-click", BUTTON3 = "Middle-click" }
+local CLICK_AFTER_MODIFIER = { BUTTON1 = "click", BUTTON2 = "right-click", BUTTON3 = "middle-click" }
 
 -- CompareVersions(a, b): -1, 0 or 1 as version a is older than, the same as
 -- or newer than b; each run of digits is a number and missing parts count as
@@ -231,12 +232,24 @@ function U.CompareVersions(a, b)
 end
 
 -- FormatKeyText(key): a binding string as the game saves it ("ALT-W",
--- "SHIFT-CTRL-X", "ALT-BUTTON1", "SHIFT-BUTTON4") the way a player reads
--- it ("Alt+W", "Shift+Ctrl+X", "Alt+Left Click", "Shift+Mouse 4"); nil
--- for anything but a string
+-- "SHIFT-CTRL-X", "ALT-BUTTON1", "SHIFT-BUTTON2", "SHIFT-BUTTON4") the way a
+-- player reads it ("Alt+W", "Shift+Ctrl+X", "Alt-click", "Shift-right-click",
+-- "Shift+Mouse 4"); the left, right and middle buttons read as clicks, a
+-- button alone as "Left-click", "Right-click" or "Middle-click"; nil for
+-- anything but a string
 function U.FormatKeyText(key)
   if type(key) ~= "string" then return nil end
-  key = key:gsub("BUTTON(%d+)$", function(n) return BUTTON_WORDS["BUTTON" .. n] or ("Mouse " .. n) end)
+  local mods, button = key:match("^(.-)(BUTTON%d+)$")
+  if CLICK_ALONE[button] then
+    if mods == "" then return CLICK_ALONE[button] end
+    local parts = {}
+    for mod in mods:gmatch("(%a+)%-") do
+      parts[#parts + 1] = mod:sub(1, 1):upper() .. mod:sub(2):lower()
+    end
+    parts[#parts + 1] = CLICK_AFTER_MODIFIER[button]
+    return table.concat(parts, "-")
+  end
+  key = key:gsub("BUTTON(%d+)$", "Mouse %1")
   return (key:gsub("SHIFT%-", "Shift+"):gsub("CTRL%-", "Ctrl+"):gsub("ALT%-", "Alt+"))
 end
 

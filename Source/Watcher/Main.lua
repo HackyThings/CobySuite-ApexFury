@@ -474,7 +474,7 @@ local SettleProvisional   -- defined after FireAlert, which it calls
 -- settling: true when a provisional hold settles, so a too-short verdict
 -- becomes final instead of holding again.
 ---------------------------------------------------------------------------
-local function FireAlert(reasonContext, settling)
+function Watcher.FireAlert(reasonContext, settling)
   if alertFired or alertSuppressed then return end
 
   -- Reaching FireAlert means this attempt resolves the cycle one way
@@ -627,7 +627,7 @@ function SettleProvisional()
   provisionalTimer = nil
   if not provisionalUntil then return end
   provisionalUntil = nil
-  FireAlert("provisional_settle", true)
+  Watcher.FireAlert("provisional_settle", true)
 end
 
 ---------------------------------------------------------------------------
@@ -716,7 +716,7 @@ local function UpdatePendingReason(reason)
   end
 end
 
-local function TryFirePending(reasonContext)
+function Watcher.TryFirePending(reasonContext)
   if not (alertPending and not alertFired and not alertSuppressed) then return end
 
   if Config.Get(Config.Options.COMBAT_ONLY) and not InCombat() then
@@ -734,7 +734,7 @@ local function TryFirePending(reasonContext)
 
   -- Both gates pass: fire. FireAlert may still suppress on linger gate.
   pendingPollTimer = CancelTimer(pendingPollTimer)
-  FireAlert(reasonContext)
+  Watcher.FireAlert(reasonContext)
 end
 
 ---------------------------------------------------------------------------
@@ -757,7 +757,7 @@ local function DeferAlert(reason)
       pendingPollTimer = CancelTimer(pendingPollTimer)
       return
     end
-    TryFirePending("polling")
+    Watcher.TryFirePending("polling")
   end)
 
   ScheduleStalePendingCleanup()
@@ -796,7 +796,7 @@ local function ResolveAlertMoment(reasonContext)
     end
   end
 
-  FireAlert(reasonContext)
+  Watcher.FireAlert(reasonContext)
 end
 
 -- Timer callback: the alert moment arrived
@@ -860,7 +860,7 @@ end
 -- A counted empower that extends the prediction while a too-short verdict
 -- is held (provisionalUntil) ends the hold and runs the alert moment again.
 ---------------------------------------------------------------------------
-local function CountEmpower(spellID)
+function Watcher.CountEmpower(spellID)
   if not castTime then return end
   local predictedEnd = PredictedTriggerEnd()
   local now = Now()
@@ -911,7 +911,7 @@ end
 ---------------------------------------------------------------------------
 -- Trigger spell was cast: start a new tracking cycle
 ---------------------------------------------------------------------------
-local function OnTriggerCast()
+function Watcher.OnTriggerCast()
   if not Config.Get(Config.Options.ENABLED) then return end
 
   ResetState()
@@ -955,7 +955,7 @@ local function OnEnterCombat()
   if alertPending and not alertFired and not alertSuppressed then
     Debug.Log("WATCHER", "Combat entered: re-evaluating pending alert (current defer: %s)",
       tostring(pendingDeferReason or "?"))
-    TryFirePending("combat_entry")
+    Watcher.TryFirePending("combat_entry")
   end
 end
 
@@ -1061,6 +1061,7 @@ end
 -- See Source/TalentGate/Main.lua for the activation policy.
 ---------------------------------------------------------------------------
 watcherFrame = CreateFrame("Frame")
+Watcher.frame = watcherFrame   -- exposed as a field for the development tools
 
 local function OnEvent(event, ...)
   if event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -1077,14 +1078,14 @@ local function OnEvent(event, ...)
         (spellID == triggerID) and " [MATCH]" or "")
     end
     if spellID == triggerID then
-      OnTriggerCast()
+      Watcher.OnTriggerCast()
     elseif EMPOWER_SPELL_IDS[spellID] and castTime then
       -- Conservative counting: a SUCCEEDED is a count signal only when no
       -- channel is in flight for this empower (Tip-the-Scales instant).
       -- For channels, SUCCEEDED is an interim event: the count happens
       -- on STOP complete=true. Cancels (STOP complete=false) never count.
       if inFlightEmpower ~= spellID then
-        CountEmpower(spellID)
+        Watcher.CountEmpower(spellID)
       end
     end
 
@@ -1122,7 +1123,7 @@ local function OnEvent(event, ...)
       inFlightEmpower = nil
     end
     if complete then
-      CountEmpower(empSpellID)
+      Watcher.CountEmpower(empSpellID)
     end
 
   elseif event == "PLAYER_REGEN_DISABLED" then
@@ -1132,21 +1133,21 @@ local function OnEvent(event, ...)
     -- Already filtered to player via RegisterUnitEvent.
     if alertPending then
       Debug.Log("WATCHER", "Vehicle exited: re-evaluating pending alert")
-      TryFirePending("vehicle_exit")
+      Watcher.TryFirePending("vehicle_exit")
     end
 
   elseif event == "LOSS_OF_CONTROL_UPDATE" then
     -- Stun/fear/silence/etc. just changed. Re-eval if pending.
     if alertPending then
       Debug.Log("WATCHER", "Loss-of-control state changed: re-evaluating pending alert")
-      TryFirePending("loc_update")
+      Watcher.TryFirePending("loc_update")
     end
 
   elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
     -- Fires on mount/dismount. Re-eval if pending.
     if alertPending then
       Debug.Log("WATCHER", "Mount display changed: re-evaluating pending alert")
-      TryFirePending("mount_change")
+      Watcher.TryFirePending("mount_change")
     end
 
   elseif event == "PLAYER_DEAD" then
@@ -1255,8 +1256,8 @@ end
 ---------------------------------------------------------------------------
 Watcher._test = {
   Reset                        = ResetState,
-  OnTriggerCast                = OnTriggerCast,
-  CountEmpower                 = CountEmpower,
+  OnTriggerCast                = Watcher.OnTriggerCast,
+  CountEmpower                 = Watcher.CountEmpower,
   EstimateLingerRemaining      = EstimateLingerRemaining,
   ComputeMaxStacksReached      = ComputeMaxStacksReached,
   ComputeProjectedStacksAtDrop = ComputeProjectedStacksAtDrop,
@@ -1292,7 +1293,7 @@ Watcher._test = {
       expectedTriggerEnd = expectedTriggerEnd, alertFired = alertFired,
       alertSuppressed = alertSuppressed, lastFiredTime = lastFiredTime,
       lastFiredOffset = lastFiredOffset, lastSuppressOffset = lastSuppressOffset,
-      lastSuppressReason = lastSuppressReason,
+      lastSuppressReason = lastSuppressReason, soundFailed = soundFailed,
     }
   end,
   Restore = function(saved)
@@ -1308,5 +1309,6 @@ Watcher._test = {
     lastFiredOffset = saved.lastFiredOffset
     lastSuppressOffset = saved.lastSuppressOffset
     lastSuppressReason = saved.lastSuppressReason
+    soundFailed = saved.soundFailed or false
   end,
 }

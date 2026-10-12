@@ -111,7 +111,7 @@ local function RenderInactivePlaceholder(state)
   RenderGateLine(state)
 end
 
-local function UpdateDisplay()
+function Overlay.UpdateDisplay()
   if not frame or not frame:IsShown() then return end
 
   local state = ApexFury.Watcher.GetState and ApexFury.Watcher.GetState() or {}
@@ -379,12 +379,13 @@ local function BuildFrame()
   f:SetScript("OnUpdate", function(_, elapsed)
     accum = accum + elapsed
     if accum >= 0.1 then
-      UpdateDisplay()
+      Overlay.UpdateDisplay()
       accum = 0
     end
   end)
 
   frame = f
+  Overlay.frame = f   -- exposed as a field for the development tools
   return f
 end
 
@@ -418,13 +419,13 @@ function Overlay.RestoreFromSavedVar()
 end
 
 -- Built hidden now: the overlay is there to be watched in combat, and a
--- first /af overlay, the settings window's Show overlay button or a restore after
+-- first /af overlay, the settings window's Show Overlay button or a restore after
 -- a /reload can all come mid-fight. Its OnUpdate only runs while it shows.
 BuildFrame()
 
 -- For ApexFury's Watcher and Overlay suites: one display update and a line's text
 Overlay._test = {
-  Update = UpdateDisplay,
+  Update = Overlay.UpdateDisplay,
   GetLineText = function(i)
     return lines[i] and lines[i]:GetText() or nil
   end,

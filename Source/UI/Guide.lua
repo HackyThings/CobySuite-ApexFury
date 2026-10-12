@@ -58,9 +58,9 @@ Guide.SECTIONS = {
       summary = "Pick any sound and the channel it plays on",
       body = {
         "- In the settings, open " .. TXT_GOLD .. "Sound|r. Search the list, click a row to hear it and pick it, then press " .. TXT_GOLD .. "Apply|r.",
-        "- " .. TXT_GOLD .. "Play sample|r plays your pick the way the alert will.",
+        "- " .. TXT_GOLD .. "Play Sample|r plays your pick the way the alert will.",
         "- " .. TXT_GOLD .. "Play it on|r: Dialog (the default) stands out most in combat; Master and Sound effects work too. The line under it warns when a game volume mutes the alert.",
-        "- Sounds from LibSharedMedia packs show up by themselves. With Leatrix Sounds, use " .. TXT_GOLD .. "Open Leatrix|r, click a sound there, then " .. TXT_GOLD .. "Use the sound I clicked|r.",
+        "- Sounds from LibSharedMedia packs show up by themselves. With Leatrix Sounds, use " .. TXT_GOLD .. "Open Leatrix|r, click a sound there, then " .. TXT_GOLD .. "Use the Sound I Clicked|r.",
       },
       try = { { "/af channel master", "Switch the audio channel from chat" } },
     },
@@ -68,13 +68,16 @@ Guide.SECTIONS = {
       key = "settings", title = "Settings", icon = ICONS .. "INV_Misc_Gear_01",
       summary = "Alert, Sound and Advanced, applied when you press Apply",
       body = {
-        "- " .. TXT_GOLD .. "Alert|r: whether ApexFury is ready here, alerts on or off, the stack to alert at with a timeline, and the hold rules.",
+        "- " .. TXT_GOLD .. "Alert|r: whether ApexFury is ready here, alerts on or off, the stack to alert at with a timeline, the hold rules and the newer-version notice.",
         "- " .. TXT_GOLD .. "Sound|r: your sound, the channel it plays on and a check that it isn't muted.",
-        "- " .. TXT_GOLD .. "Advanced|r: the timing numbers (locked until " .. TXT_GOLD .. "Edit timing overrides|r), the overlay, the debug log and verbose logging.",
-        "- Changes wait for " .. TXT_GOLD .. "Apply|r. " .. TXT_GOLD .. "Undo edits|r or closing the window drops them, and " .. TXT_GOLD .. "Defaults|r fills in every default for you to check.",
+        "- " .. TXT_GOLD .. "Advanced|r: the timing numbers (locked until " .. TXT_GOLD .. "Edit Timing Overrides|r), the overlay, the debug log and verbose logging.",
+        "- Changes wait for " .. TXT_GOLD .. "Apply|r. " .. TXT_GOLD .. "Undo Edits|r or closing the window drops them, and " .. TXT_GOLD .. "Defaults|r fills in every default for you to check.",
         "- After logging in, open the settings out of combat the first time.",
       },
-      try = { { "/af reset", "Put every setting back to its default at once" } },
+      try = {
+        { "/af reset", "Put every setting back to its default at once" },
+        { "/af reset windows", "Put every window back to its default place and size" },
+      },
     },
     {
       key = "overlay", title = "Overlay and bug reports", icon = ICONS .. "INV_Misc_Spyglass_02",
@@ -91,6 +94,8 @@ Guide.SECTIONS = {
       },
     },
 }
+-- The last section in every addon's guide: the list of every addon by Cobanyte
+Guide.SECTIONS[#Guide.SECTIONS + 1] = CobySuite_ApexFury.UI.AddonsGuideSection(ApexFury.AddonsList)
 
 local guide = CobySuite_ApexFury.UI.CreateGuideWindow({
   name = "ApexFuryGuideWindow",

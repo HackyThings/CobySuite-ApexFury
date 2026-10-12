@@ -64,7 +64,7 @@ ApexFury.Message = Message
 --
 -- CobySuite.Slash.Register owns the aliases, the SlashCmdList entry, the
 -- dispatch, and the generated "help" and "version" commands. The suite's
--- standard commands (settings, guide, changelog, debug, test) come from
+-- standard commands (settings, guide, changelog, addons, debug, test) come from
 -- CobySuite.Slash.StandardCommands; ApexFury has no main window besides
 -- settings, so there is no show and bare /af opens the settings. The
 -- addon's own command bodies live here. The guide and the changelog load
@@ -106,14 +106,14 @@ local function PrintStatus()
     end
   end
   Message("  Alerts: " .. (enabled and TXT_GREEN .. "yes|r" or "|cFFFF4C4Cno|r"))
-  Message("  Verbose: " .. (Config.Get(Config.Options.VERBOSE) and TXT_GREEN .. "on|r" or "|cFF888888off|r"))
+  Message("  Log every cast: " .. (Config.Get(Config.Options.VERBOSE) and TXT_GREEN .. "on|r" or "|cFF888888off|r"))
   Message("  Starts the timer: spell " .. TXT_WHITE .. tostring(spellID) .. "|r (cast event)")
   Message("  Alert at stack: " .. TXT_WHITE .. tostring(threshold) .. "|r")
   Message("  Seconds between stacks: " .. TXT_WHITE .. tostring(interval) .. "s|r")
   Message(string.format("  Timer fires at " .. TXT_GREEN .. "%.0fs|r |cFF888888(the alert is skipped unless Dragonrage lasts at least %.1fs)|r",
     fireDelay, minDuration))
-  Message("  Hold until in combat: " .. (Config.Get(Config.Options.COMBAT_ONLY) and TXT_GREEN .. "yes|r (defer if not in combat)" or TXT_YELLOW .. "no|r (fire any time)"))
-  Message("  Hold until you can act: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and TXT_GREEN .. "yes|r (defer in vehicle/mount/CC/possession)" or TXT_YELLOW .. "no|r (fire regardless of player state)"))
+  Message("  Hold until in combat: " .. (Config.Get(Config.Options.COMBAT_ONLY) and TXT_GREEN .. "yes|r (waits if not in combat)" or TXT_YELLOW .. "no|r (plays any time)"))
+  Message("  Hold until you can act: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and TXT_GREEN .. "yes|r (waits in a vehicle, mounted, stunned or possessed)" or TXT_YELLOW .. "no|r (plays regardless)"))
   Message("  Skip a held alert with less than: " .. TXT_WHITE .. tostring(Config.Get(Config.Options.MIN_REMAINING)) .. "s|r of Rising Fury left")
   Message("  Linger model: " .. TXT_WHITE .. tostring(Config.Get(Config.Options.LINGER_PER_STACK)) .. "s/stack|r, max " .. TXT_WHITE .. tostring(Config.Get(Config.Options.LINGER_MAX)) .. "s|r, " .. TXT_WHITE .. tostring(Config.Get(Config.Options.MAX_STACKS)) .. "|r max stacks")
   Message("  Sound ID: " .. TXT_WHITE .. tostring(soundID) .. "|r")
@@ -175,6 +175,11 @@ local function SetChannel(rest)
   end
 end
 
+local function ResetSettings()
+  ApexFury.Config.Reset()
+  Message("All settings restored to defaults.")
+end
+
 local function ToggleDebugWindow()
   if ApexFury.DebugWindow then
     ApexFury.DebugWindow:Toggle()
@@ -197,6 +202,25 @@ local function ToggleOverlay()
   end
 end
 
+-- "/af addons" and the guide's last section: every addon by Cobanyte
+-- (CobySuite.UI.ToggleAddonsWindow, the same list in each addon)
+ApexFury.AddonsList = {
+  host = "ApexFury", slash = "/af", icon = ApexFury.ICON,
+  message = Message,
+  state = function() return APEX_FURY_UI_STATE end,   -- the list remembers its place and size
+}
+
+-- "/af reset windows" (CobySuite.UI.ConfirmResetWindows): every window the
+-- addon builds saves its place into APEX_FURY_UI_STATE, so that one table
+-- finds them all (settings, guide, changelog, overlay, addons list); the
+-- debug log window saves nothing, so it is listed by itself
+ApexFury.WindowsReset = {
+  host = "ApexFury", title = "ApexFury", icon = ApexFury.ICON,
+  message = Message,
+  states = { function() return APEX_FURY_UI_STATE end },
+  windows = function() return { ApexFury.DebugWindow } end,
+}
+
 -- "/af" is listed first so the generated help shows it as the primary alias.
 CobySuite_ApexFury.Slash.Register({
   key      = "APEXFURY",
@@ -210,7 +234,11 @@ CobySuite_ApexFury.Slash.Register({
     settings  = ToggleSettings,
     guide     = ToggleGuide,
     changelog = ToggleChangelog,
+    addons    = ApexFury.AddonsList,
     debug     = ToggleDebugWindow,
+    resetWindows = ApexFury.WindowsReset,
+    -- a bare "/af reset" is the older command that restores every setting
+    resetBare = ResetSettings,
     -- Development only: the suites are stripped from release builds, and
     -- test is then left out of the help
     tests     = function() return ApexFury.Tests end,
@@ -219,10 +247,8 @@ CobySuite_ApexFury.Slash.Register({
       { name = "scan", usage = "scan [name]", help = "List active player buffs (find spell IDs)", run = ScanBuffs },
       { name = "overlay", aliases = { "show" }, help = "Open or close the on-screen status overlay", run = ToggleOverlay },
       { name = "channel", usage = "channel [dialog|master|sfx]", help = "Show or change the audio channel", run = SetChannel },
-      { name = "reset", help = "Restore every setting to its default", run = function()
-        ApexFury.Config.Reset()
-        Message("All settings restored to defaults.")
-      end },
+      -- help line only: the standard "reset windows" entry runs both
+      { usage = "reset", help = "Restore every setting to its default" },
     },
   }),
 })
@@ -231,6 +257,7 @@ CobySuite_ApexFury.Slash.Register({
 -- Startup sequence
 -------------------------------------------------------------------------------
 local startupFrame = CreateFrame("Frame")
+ApexFury.eventFrame = startupFrame   -- exposed as a field for the development tools
 startupFrame:RegisterEvent("ADDON_LOADED")
 startupFrame:RegisterEvent("PLAYER_LOGIN")
 
@@ -245,6 +272,12 @@ startupFrame:SetScript("OnEvent", function(_, event, arg1)
     -- A fresh install opens the guide; an update, the changelog. First, so
     -- it reads the saved state before the channel hint below marks it
     if ApexFury.WhatsNew then ApexFury.WhatsNew.OnLogin() end
+    -- The suite's version check: a chat line when a newer release is out
+    CobySuite_ApexFury.VersionCheck.Register({
+      key = "AF", addon = ADDON_NAME, title = "ApexFury", color = ApexFury.BRAND_COLOR,
+      enabled = function() return ApexFury.Config.Get(ApexFury.Config.Options.VERSION_CHECK) end,
+      log = function(fmt, ...) ApexFury.Debug.Log("INIT", fmt, ...) end,
+    })
     if ApexFury.Watcher.Start then
       ApexFury.Watcher.Start()
     end
