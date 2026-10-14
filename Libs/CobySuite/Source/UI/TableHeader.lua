@@ -689,3 +689,68 @@ function Mixin:FitColumns()
     end
   end
 end
+
+-------------------------------------------------------------------------------
+-- CobySuite.UI.LayoutRowCells(row, header, opts): places a list row's cells
+-- under the header's columns (GetColumnBounds), the way every table on a
+-- ScrollBox lays its rows out. Call it when a row is filled and from the
+-- header's onColumnResize. Only anchors and widths change: the cells, their
+-- fonts, justification and content stay the caller's.
+--
+--   a plain column    text from left + 4, width - inset wide (never under 10)
+--   the icon column   icon at left + 4; text from left + iconSize + 8,
+--                     width - iconSize - 12 wide
+--   a stretch column  text from left + stretchInset; the last column runs to
+--                     the row's right edge less 4, one before others is
+--                     its bound's width
+--
+--   opts.cell(row, key, index)  the column's cell: a font string (and its
+--                     icon texture as a second result), or an object
+--                     { text =, icon = }; nil skips the column (a padding
+--                     column). Default: row.cells[index], with row.Icon
+--   opts.iconKey      the key of the column that shows the icon
+--   opts.iconSize     default 16
+--   opts.inset        default 8
+--   opts.stretchInset default 6
+--   opts.bounds       header:GetColumnBounds() taken once for many rows
+-------------------------------------------------------------------------------
+local function DefaultCell(row, _, index)
+  return row.cells and row.cells[index], row.Icon
+end
+
+function CobySuite_ApexFury.UI.LayoutRowCells(row, header, opts)
+  opts = opts or {}
+  local inset, stretchInset = opts.inset or 8, opts.stretchInset or 6
+  local iconKey, iconSize = opts.iconKey, opts.iconSize or 16
+  local cellOf = opts.cell or DefaultCell
+  local columns = header:GetColumns()
+  local bounds = opts.bounds or header:GetColumnBounds()
+  for i, col in ipairs(columns) do
+    local text, icon = cellOf(row, col.key, i)
+    if type(text) == "table" and type(text.SetPoint) ~= "function" then
+      text, icon = text.text, text.icon   -- a cell object
+    end
+    local b = bounds[i]
+    if b and text then
+      text:ClearAllPoints()
+      if iconKey ~= nil and col.key == iconKey then
+        if icon then
+          icon:ClearAllPoints()
+          icon:SetPoint("LEFT", row, "LEFT", b.left + 4, 0)
+        end
+        text:SetPoint("LEFT", row, "LEFT", b.left + iconSize + 8, 0)
+        text:SetWidth(math.max(b.width - iconSize - 12, 10))
+      elseif col.stretch then
+        text:SetPoint("LEFT", row, "LEFT", b.left + stretchInset, 0)
+        if i == #columns then
+          text:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+        else
+          text:SetWidth(math.max(b.width - stretchInset - 4, 10))
+        end
+      else
+        text:SetPoint("LEFT", row, "LEFT", b.left + 4, 0)
+        text:SetWidth(math.max(b.width - inset, 10))
+      end
+    end
+  end
+end

@@ -110,7 +110,7 @@ FillRowTooltip = function(tip, entry, shift)
   tip:SetText(U.StripColors(entry.label or ""), w[1], w[2], w[3])
   local color = PillColorForEntry(entry)
   tip:AddLine("Source: |cFF" .. color .. SourceDisplayName(entry) .. "|r", w[1], w[2], w[3])
-  tip:AddLine("Type: |cFF888888" .. KindLabel(entry) .. "|r", w[1], w[2], w[3])
+  tip:AddLine("Type: " .. U.WrapColor(TC.TEXT_DIM, KindLabel(entry)), w[1], w[2], w[3])
   if shift then
     if entry.path then
       tip:AddLine("|cFF666666" .. entry.path .. "|r", w[1], w[2], w[3], true)
@@ -366,21 +366,11 @@ function SoundBrowser.Create(parent, opts)
   header:SetSort(sortKey, sortDir)
 
   ---------------------------------------------------------------------------
-  -- ScrollBox + scrollbar (modern virtualized list)
+  -- ScrollBox + scrollbar (modern virtualized list, UI.CreateScrollList)
   ---------------------------------------------------------------------------
-  scrollBox = CreateFrame("Frame", nil, frame, "WowScrollBoxList")
-  scrollBox:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
-  scrollBox:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -SCROLLBAR_W - PAD - 4, PAD)
-
-  local scrollBar = CreateFrame("EventFrame", nil, frame, "MinimalScrollBar")
-  scrollBar:SetPoint("TOPLEFT", scrollBox, "TOPRIGHT", 4, 0)
-  scrollBar:SetPoint("BOTTOMLEFT", scrollBox, "BOTTOMRIGHT", 4, 0)
-
   dataProvider = CreateDataProvider()
 
-  local scrollView = CreateScrollBoxListLinearView()
-  scrollView:SetElementExtent(ROW_HEIGHT)
-  scrollView:SetElementInitializer("Button", function(row, data)
+  local function InitRow(row, data)
     EnsureRowStructure(row, header:GetColumns())
 
     -- Reset and bind handlers (clean per virtualization cycle).
@@ -417,10 +407,11 @@ function SoundBrowser.Create(parent, opts)
     end)
 
     PopulateRow(row, data, header:GetColumns(), getCurrentValue(), rowIndexOf[data], header:GetColumnBounds())
-  end)
+  end
 
-  ScrollUtil.InitScrollBoxListWithScrollBar(scrollBox, scrollBar, scrollView)
-  scrollBox:SetDataProvider(dataProvider)
+  scrollBox = CobySuite_ApexFury.UI.CreateScrollList(frame, { rowHeight = ROW_HEIGHT, initializeRow = InitRow, dataProvider = dataProvider }).box
+  scrollBox:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
+  scrollBox:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -SCROLLBAR_W - PAD - 4, PAD)
 
   ---------------------------------------------------------------------------
   -- Filtering + refresh
@@ -474,11 +465,7 @@ function SoundBrowser.Create(parent, opts)
         dataProvider:Insert(filteredEntries[i])
       end
     end
-    countText:SetText(string.format(
-      "|cFF888888%d %s|r",
-      #filteredEntries,
-      #filteredEntries == 1 and "sound" or "sounds"
-    ))
+    countText:SetText(U.WrapColor(TC.TEXT_DIM, #filteredEntries .. " " .. U.Plural(#filteredEntries, "sound")))
   end
 
   ---------------------------------------------------------------------------

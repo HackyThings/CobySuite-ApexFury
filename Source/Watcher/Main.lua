@@ -93,6 +93,7 @@
 local Watcher = ApexFury.Watcher
 local Config = ApexFury.Config
 local Debug = ApexFury.Debug
+local U = CobySuite_ApexFury.Utilities
 
 -- Internal state ----------------------------------------------------------
 local castTime              -- when trigger spell last cast (or nil)
@@ -139,10 +140,7 @@ local THRESHOLD_BUFFER = 0.1
 -- Secret-value gate (12.0 secret values, 12.1 fully secret aura data).
 -- True for secret scalars and secret tables; false for nil and plain data.
 local function IsSecret(v)
-  if v == nil then return false end
-  if issecretvalue and issecretvalue(v) then return true end
-  if issecrettable and type(v) == "table" and issecrettable(v) then return true end
-  return false
+  return U.IsSecret(v) or U.IsSecretTable(v)
 end
 
 -- Empower arrival-latency grace. UNIT_SPELLCAST_SUCCEEDED arrives client-side

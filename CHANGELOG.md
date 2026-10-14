@@ -4,6 +4,12 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-10-13
+
+### Changed
+
+- Updated for World of Warcraft patch 12.1.5.
+
 ## [1.0.8] - 2026-10-11
 
 ### Added
@@ -123,7 +129,8 @@ All notable changes to ApexFury are documented here. Format follows [Keep a Chan
 
 Initial release of ApexFury.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-ApexFury/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.9
 [1.0.8]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.8
 [1.0.7]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.7
 [1.0.6]: https://github.com/HackyThings/CobySuite-ApexFury/releases/tag/v1.0.6

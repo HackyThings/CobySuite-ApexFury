@@ -17,11 +17,15 @@ U.AH_CUT = 0.05
 -- Whether value is a number that is neither NaN nor infinite. The client's
 -- Lua cannot tell NaN by comparing it: in 12.1, 0/0 == 0/0, 0/0 < math.huge
 -- and 0/0 > -math.huge are all true, so value ~= value never catches it and
--- a range check lets it through. Printing compares nothing: a finite number
--- prints as digits, a point, a sign and an exponent, while NaN and the
--- infinities print letters or "#" ("-nan(ind)", "inf", "1.#INF").
+-- a range check lets it through. 12.1.5's math.isfinite answers exactly, so it
+-- is used when present. Without it (older clients, offline runtimes) printing
+-- compares nothing: a finite number prints as digits, a point, a sign and an
+-- exponent, while NaN and the infinities print letters or "#" ("-nan(ind)",
+-- "inf", "1.#INF"). A secret value is false before anything reads it.
 function U.IsFiniteNumber(value)
-  return type(value) == "number" and not string.find(tostring(value), "[^%d%.eE%+%-]")
+  if U.IsSecret(value) or type(value) ~= "number" then return false end
+  if math.isfinite then return math.isfinite(value) end
+  return not string.find(tostring(value), "[^%d%.eE%+%-]")
 end
 
 -- IsSecret(value): a 12.x secret value, which addon code may hold in a
@@ -35,6 +39,91 @@ end
 
 function U.IsSecretTable(value)
   return issecrettable ~= nil and type(value) == "table" and issecrettable(value) and true or false
+end
+
+-- IsWholeNumber(value, min, max): a number with no fraction, at least min
+-- (default 0) and, when max is given, at most max. A secret value is false
+-- before anything reads it, and so are NaN and the infinities
+-- (IsFiniteNumber), which a range check alone lets through in the client.
+function U.IsWholeNumber(value, min, max)
+  if U.IsSecret(value) or not U.IsFiniteNumber(value) then return false end
+  if value ~= math.floor(value) or value < (min or 0) then return false end
+  return max == nil or value <= max
+end
+
+-- SafeCall(isSecret, count, fn, ...): fn(...)'s first count results (1 to
+-- 4, default 1), nil holes kept, or a single nil when fn is not a function,
+-- the call throws, or any of those count results is secret. isSecret(value)
+-- tells a secret (default U.IsSecret); results past count are dropped
+-- unread. For a module's own seam call, kept as a one-line adapter:
+--   local function Seam(name, ...) return U.SafeCall(Host.IsSecret, 2, X.seams[name], ...) end
+local function SafeResults(isSecret, count, ok, a, b, c, d)
+  if not ok or isSecret(a) then return nil end
+  if count == 1 then return a end
+  if isSecret(b) then return nil end
+  if count == 2 then return a, b end
+  if isSecret(c) then return nil end
+  if count == 3 then return a, b, c end
+  if isSecret(d) then return nil end
+  return a, b, c, d
+end
+
+function U.SafeCall(isSecret, count, fn, ...)
+  count = count or 1
+  if count ~= 1 and count ~= 2 and count ~= 3 and count ~= 4 then
+    error("SafeCall: count must be 1 to 4, got " .. tostring(count), 2)
+  end
+  if type(fn) ~= "function" then return nil end
+  return SafeResults(isSecret or U.IsSecret, count, pcall(fn, ...))
+end
+
+---------------------------------------------------------------------------
+-- Names, links and GUIDs
+---------------------------------------------------------------------------
+-- NormalizeRealm(realm): a realm as chat carries it in a sender's name, no
+-- spaces or hyphens ("Area 52" is "Area52", "Azjol-Nerub" is "AzjolNerub");
+-- nil for anything but a string, or a secret
+function U.NormalizeRealm(realm)
+  if type(realm) ~= "string" or U.IsSecret(realm) then return nil end
+  return (realm:gsub("[%s%-]", ""))
+end
+
+-- CanonicalName(name, realm): "Name-Realm", the form senders are compared
+-- in. A name that already has a realm stays as it is; with no realm (nil,
+-- "", not a string or secret) the bare name. nil when name is not a
+-- non-empty string, or is secret. The realm is used as given: pass the
+-- normalized one (GetNormalizedRealmName, UnitFullName, NormalizeRealm).
+function U.CanonicalName(name, realm)
+  if type(name) ~= "string" or U.IsSecret(name) or name == "" then return nil end
+  if name:find("-", 1, true) then return name end
+  if type(realm) ~= "string" or U.IsSecret(realm) or realm == "" then return name end
+  return name .. "-" .. realm
+end
+
+-- The kinds IDFromLink reads; a kind is never used as a pattern itself
+local LINK_PATTERNS = {
+  item = "item:(%d+)", currency = "currency:(%d+)", quest = "quest:(%d+)",
+  spell = "spell:(%d+)", achievement = "achievement:(%d+)",
+}
+
+-- IDFromLink(link, kind): the ID in a chat link ("|Hitem:19019:...|h"), as
+-- a number; kind is "item" (the default), "currency", "quest", "spell" or
+-- "achievement". nil for another kind, a link without one, or anything but
+-- a string, or a secret.
+function U.IDFromLink(link, kind)
+  local pattern = LINK_PATTERNS[kind or "item"]
+  if not pattern or type(link) ~= "string" or U.IsSecret(link) then return nil end
+  return tonumber(link:match(pattern))
+end
+
+-- NpcIDFromGUID(guid): the NPC ID in a creature or vehicle GUID
+-- ("Creature-0-<server>-<instance>-<zone>-<npcID>-<spawn>"); nil for a
+-- player, a pet, an object, anything unreadable or a secret
+function U.NpcIDFromGUID(guid)
+  if type(guid) ~= "string" or U.IsSecret(guid) then return nil end
+  local kind, id = guid:match("^(%a+)%-[^-]*%-[^-]*%-[^-]*%-[^-]*%-(%d+)")
+  if kind ~= "Creature" and kind ~= "Vehicle" then return nil end
+  return tonumber(id)
 end
 
 ---------------------------------------------------------------------------
@@ -117,6 +206,7 @@ U.Colors = {
   TEXT_YELLOW = "FFFF00",
   TEXT_ORANGE = "FF8800",
   TEXT_GOLD   = "FFD100",   -- the client's normal gold (NORMAL_FONT_COLOR)
+  TEXT_DIM    = "888888",   -- dim secondary text inside a line (a hint, a count, a separator)
 
   -- Slash command help and guide "Try it" lines (U.FormatCommandLine), so the
   -- command stands out from its description. Bright colors throughout: the
@@ -190,6 +280,37 @@ end
 -- anything ColorToHex takes ({1, 0.82, 0}, a ColorMixin)
 function U.WrapColor(color, text)
   return "|cFF" .. U.ColorToHex(color) .. text .. "|r"
+end
+
+-- QualityColor(quality, fallback): r, g, b of an item quality's color
+-- (ITEM_QUALITY_COLORS, a table read, fine on a list's every row). An
+-- unknown, missing or secret quality gives fallback's r, g, b ({ r, g, b }
+-- or { r =, g =, b = }; default HIGHLIGHT_WHITE), or nil when fallback is
+-- false. QualityHex(quality, fallback): the same color as "RRGGBB" (the
+-- client's own hex, in its case), fallback a hex string (default "FFFFFF")
+-- or false.
+local function QualityEntry(quality)
+  if quality == nil or U.IsSecret(quality) or type(ITEM_QUALITY_COLORS) ~= "table" then return nil end
+  return ITEM_QUALITY_COLORS[quality]
+end
+
+function U.QualityColor(quality, fallback)
+  local c = QualityEntry(quality)
+  if c and c.r then return c.r, c.g, c.b end
+  if fallback == false then return nil end
+  c = fallback or U.Colors.HIGHLIGHT_WHITE
+  return c.r or c[1], c.g or c[2], c.b or c[3]
+end
+
+function U.QualityHex(quality, fallback)
+  local c = QualityEntry(quality)
+  if c then
+    local hex = type(c.hex) == "string" and c.hex:match("^|c%x%x(%x%x%x%x%x%x)")
+    if hex then return hex end
+    if c.r then return U.ColorToHex(c) end
+  end
+  if fallback == false then return nil end
+  return fallback or "FFFFFF"
 end
 
 -- StripColors(text): the text without color codes: "|cFFxxxxxx", "|cFF 0FF 0"
@@ -487,6 +608,13 @@ end
 ---------------------------------------------------------------------------
 -- String helpers
 ---------------------------------------------------------------------------
+-- Plural(n, one, many): the word for n things, one when n is 1, else many
+-- (default one .. "s"): Plural(3, "pack") is "packs". The word only.
+function U.Plural(n, one, many)
+  if n == 1 then return one end
+  return many or (one .. "s")
+end
+
 -- Escape a literal string for use inside a Lua pattern.
 function U.EscapePattern(text)
   return (text:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))

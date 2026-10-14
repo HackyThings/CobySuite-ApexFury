@@ -16,9 +16,24 @@
 --       ["max_rows"]    = { type = "number", min = 1, max = 10, integer = true },
 --       ["speed"]       = { type = "string", values = { "Slow", "Fast" } },
 --     },
+--     bus        = MyAddon.EventBus,         -- optional, with event: fired on Set
+--     event      = MyAddon.Events.ConfigChanged,  --   and on Reset (below)
+--     ensureTables = { "MYADDON_WINDOW_STATE" },  -- optional: globals made tables
 --   })
 --
--- Returns: { Options, Defaults, IsValidOption, CheckValue, Get, Set, Reset, InitializeData }
+-- Returns: { Options, Defaults, IsValidOption, CheckValue, Get, Set, Reset,
+-- InitializeData, HadSavedData }
+--
+-- bus and event (Task #382): Set fires bus:Fire(event, name, newValue,
+-- oldValue), the order every addon's ConfigChanged listeners read, and Reset
+-- fires bus:Fire(event) with nothing else (everything changed). Both still
+-- call onSet and onReset, whose own arguments stay (name, old, new): an
+-- addon that moves its Fire onto bus takes it out of its onSet, or it fires
+-- twice. ensureTables: each named global that is not a table becomes {} at
+-- the end of InitializeData (an addon's window-state SavedVariable).
+-- HadSavedData(): true when the saved table held anything before the first
+-- InitializeData filled its defaults (a player of an earlier release; What's
+-- New's existingInstall), false for a fresh install or before it runs.
 --
 -- Validation: a key with a rule only ever holds a value that passes it.
 -- Set refuses a failing value (returns false and the reason, logs a CONFIG
@@ -37,6 +52,9 @@ function CobySuite_ApexFury.Config.New(opts)
 
   local svName = opts.savedVariable
   local debug = opts.debug
+  local bus, event = opts.bus, opts.event
+  if bus ~= nil and event == nil then error("Config.New: opts.bus needs opts.event", 2) end
+  local hadSavedData, initialized = false, false
 
   -- Build reverse lookup set for O(1) validation
   local validOptions = {}
@@ -118,6 +136,7 @@ function CobySuite_ApexFury.Config.New(opts)
       debug.Log("CONFIG", "Set %s: %s -> %s", tostring(name), tostring(old), tostring(value))
     end
     if opts.onSet then opts.onSet(name, old, value) end
+    if bus then bus:Fire(event, name, value, old) end
     return true
   end
 
@@ -129,10 +148,19 @@ function CobySuite_ApexFury.Config.New(opts)
     _G[svName] = sv
     if debug then debug.Log("CONFIG", "Reset: all options restored to defaults") end
     if opts.onReset then opts.onReset() end
+    if bus then bus:Fire(event) end
+  end
+
+  function config.HadSavedData()
+    return hadSavedData
   end
 
   function config.InitializeData()
     local sv = _G[svName]
+    if not initialized then
+      initialized = true
+      hadSavedData = type(sv) == "table" and next(sv) ~= nil
+    end
     if type(sv) ~= "table" then
       if sv ~= nil and debug then
         debug.Warn("CONFIG", "InitializeData: %s held a %s, starting from defaults", svName, type(sv))
@@ -189,6 +217,10 @@ function CobySuite_ApexFury.Config.New(opts)
     if #nonDefaults > 0 then
       table.sort(nonDefaults)
       if debug then debug.Log("CONFIG", "Non-default values: %s", table.concat(nonDefaults, ", ")) end
+    end
+
+    for _, name in ipairs(opts.ensureTables or {}) do
+      if type(_G[name]) ~= "table" then _G[name] = {} end
     end
   end
 

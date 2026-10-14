@@ -657,7 +657,7 @@ local function PaintSelectedSound(row, win)
       "Pack not installed: the alert plays %s until it's back", U.StripColors(ApexFury.Sound.DefaultLabel()))))
   else
     local line = SelectedSourceText(source) .. " · " .. SelectedKindText(entry.kind or "")
-    row.SelectedSource:SetText("|cFF888888" .. line .. "|r")
+    row.SelectedSource:SetText(U.WrapColor(U.Colors.TEXT_DIM, line))
   end
 end
 
@@ -827,7 +827,7 @@ local function BuildLeatrix(panel, stageSound)
           -- Going INTO a Leatrix sound never needs the replace confirmation
           stageSound("fdid:" .. fdid, { label = path or "" })
           ApexFury.Message(string.format(
-            "Sound picked from Leatrix: |cFFFFD200%s|r |cFF888888(FileDataID %d)|r. Press Apply to keep it.",
+            "Sound picked from Leatrix: |cFFFFD200%s|r " .. U.WrapColor(U.Colors.TEXT_DIM, "(FileDataID %d)") .. ". Press Apply to keep it.",
             path or "?", fdid))
         end,
       })

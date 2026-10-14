@@ -21,6 +21,7 @@ local U = CobySuite_ApexFury.Utilities
 local TXT_GREEN = "|cFF" .. U.Colors.TEXT_GREEN
 local TXT_ORANGE = "|cFF" .. U.Colors.TEXT_ORANGE
 local TXT_YELLOW = "|cFF" .. U.Colors.TEXT_YELLOW
+local TXT_DIM = "|cFF" .. U.Colors.TEXT_DIM
 local TXT_WHITE = "|cFF" .. U.ColorToHex(U.Colors.HIGHLIGHT_WHITE)
 local TXT_GRAY = "|cFF" .. U.ColorToHex(U.Colors.DISABLED_GRAY)
 
@@ -92,13 +93,13 @@ local function PrintStatus()
   if gate then
     if gate.usable then
       if gate.hasAnimosity then
-        Message("  Talent gate: " .. TXT_GREEN .. "ready|r |cFF888888(Rising Fury rank " ..
+        Message("  Talent gate: " .. TXT_GREEN .. "ready|r " .. TXT_DIM .. "(Rising Fury rank " ..
           tostring(gate.risingFuryRank) .. ", Animosity on)|r")
       elseif gate.hasAnimosity == nil then
-        Message("  Talent gate: " .. TXT_GREEN .. "ready|r |cFF888888(Rising Fury rank " ..
+        Message("  Talent gate: " .. TXT_GREEN .. "ready|r " .. TXT_DIM .. "(Rising Fury rank " ..
           tostring(gate.risingFuryRank) .. ", Animosity not found yet, assumed on)|r")
       else
-        Message(string.format("  Talent gate: |cFFFFAA00active, up to %d stacks|r |cFF888888(no Animosity)|r",
+        Message(string.format("  Talent gate: |cFFFFAA00active, up to %d stacks|r " .. TXT_DIM .. "(no Animosity)|r",
           ApexFury.Watcher.StacksWithoutExtension()))
       end
     else
@@ -106,11 +107,11 @@ local function PrintStatus()
     end
   end
   Message("  Alerts: " .. (enabled and TXT_GREEN .. "yes|r" or "|cFFFF4C4Cno|r"))
-  Message("  Log every cast: " .. (Config.Get(Config.Options.VERBOSE) and TXT_GREEN .. "on|r" or "|cFF888888off|r"))
+  Message("  Log every cast: " .. (Config.Get(Config.Options.VERBOSE) and TXT_GREEN .. "on|r" or TXT_DIM .. "off|r"))
   Message("  Starts the timer: spell " .. TXT_WHITE .. tostring(spellID) .. "|r (cast event)")
   Message("  Alert at stack: " .. TXT_WHITE .. tostring(threshold) .. "|r")
   Message("  Seconds between stacks: " .. TXT_WHITE .. tostring(interval) .. "s|r")
-  Message(string.format("  Timer fires at " .. TXT_GREEN .. "%.0fs|r |cFF888888(the alert is skipped unless Dragonrage lasts at least %.1fs)|r",
+  Message(string.format("  Timer fires at " .. TXT_GREEN .. "%.0fs|r " .. TXT_DIM .. "(the alert is skipped unless Dragonrage lasts at least %.1fs)|r",
     fireDelay, minDuration))
   Message("  Hold until in combat: " .. (Config.Get(Config.Options.COMBAT_ONLY) and TXT_GREEN .. "yes|r (waits if not in combat)" or TXT_YELLOW .. "no|r (plays any time)"))
   Message("  Hold until you can act: " .. (Config.Get(Config.Options.ACTIONABILITY_GATE) and TXT_GREEN .. "yes|r (waits in a vehicle, mounted, stunned or possessed)" or TXT_YELLOW .. "no|r (plays regardless)"))
@@ -156,7 +157,7 @@ local function ScanBuffs(rest)
   elseif matched == 0 and hidden == 0 then
     Message("  (no matching buffs)")
   elseif hidden > 0 then
-    Message(string.format("  |cFF888888(%d private aura(s) skipped)|r", hidden))
+    Message(string.format("  " .. TXT_DIM .. "(%d private aura(s) skipped)|r", hidden))
   end
 end
 

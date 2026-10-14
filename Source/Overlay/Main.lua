@@ -25,6 +25,7 @@ local UI = CobySuite_ApexFury.UI
 local TXT_GREEN = "|cFF" .. U.Colors.TEXT_GREEN
 local TXT_ORANGE = "|cFF" .. U.Colors.TEXT_ORANGE
 local TXT_YELLOW = "|cFF" .. U.Colors.TEXT_YELLOW
+local TXT_DIM = "|cFF" .. U.Colors.TEXT_DIM
 local TXT_LIGHT = "|cFF" .. U.ColorToHex(U.Colors.LIGHT_GRAY)
 
 local LINE_TOOLTIPS = {
@@ -91,7 +92,7 @@ local function RenderGateLine(state)
   elseif reason == "api_unavailable" then
     lines[7]:SetText(TXT_LIGHT .. "Gate:|r |cFFFF4C4Ctalents not loaded|r |cFF555555(change talents or zone)|r")
   else
-    lines[7]:SetText(TXT_LIGHT .. "Gate:|r |cFF888888" .. tostring(detail) .. "|r")
+    lines[7]:SetText(TXT_LIGHT .. "Gate:|r " .. TXT_DIM .. tostring(detail) .. "|r")
   end
 end
 
@@ -102,12 +103,12 @@ end
 ---------------------------------------------------------------------------
 local function RenderInactivePlaceholder(state)
   local detail = state.gateDetail or "Inactive"
-  lines[1]:SetText(TXT_LIGHT .. "Status:|r |cFF888888inactive|r")
-  lines[2]:SetText("|cFF888888" .. detail .. "|r")
-  lines[3]:SetText("|cFF888888--|r")
-  lines[4]:SetText("|cFF888888--|r")
-  lines[5]:SetText("|cFF888888--|r")
-  lines[6]:SetText("|cFF888888--|r")
+  lines[1]:SetText(TXT_LIGHT .. "Status:|r " .. TXT_DIM .. "inactive|r")
+  lines[2]:SetText(TXT_DIM .. detail .. "|r")
+  lines[3]:SetText(TXT_DIM .. "--|r")
+  lines[4]:SetText(TXT_DIM .. "--|r")
+  lines[5]:SetText(TXT_DIM .. "--|r")
+  lines[6]:SetText(TXT_DIM .. "--|r")
   RenderGateLine(state)
 end
 
@@ -132,7 +133,7 @@ function Overlay.UpdateDisplay()
 
   -- Line 1: our timer / state
   if alertsOff then
-    lines[1]:SetText(TXT_LIGHT .. "Status:|r |cFF888888alerts off|r")
+    lines[1]:SetText(TXT_LIGHT .. "Status:|r " .. TXT_DIM .. "alerts off|r")
   elseif state.alertPending then
     local elapsed = state.castTime and (now - state.castTime) or 0
     -- Linger past its predicted end? The watcher's stale-pending cleanup
@@ -141,7 +142,7 @@ function Overlay.UpdateDisplay()
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[1]:SetText(string.format(
-        TXT_LIGHT .. "Status:|r |cFF888888EXPIRED: Rising Fury ended|r |cFF555555(%.1fs since cast)|r",
+        TXT_LIGHT .. "Status:|r " .. TXT_DIM .. "EXPIRED: Rising Fury ended|r |cFF555555(%.1fs since cast)|r",
         elapsed))
     else
       local reasonText = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).status
@@ -167,7 +168,7 @@ function Overlay.UpdateDisplay()
     -- 30s from the alert itself: a held alert can fire well after the cast
     lines[1]:SetText(TXT_LIGHT .. "Status:|r " .. TXT_GREEN .. "fired|r")
   else
-    lines[1]:SetText(TXT_LIGHT .. "Status:|r |cFF888888idle|r")
+    lines[1]:SetText(TXT_LIGHT .. "Status:|r " .. TXT_DIM .. "idle|r")
   end
 
   -- Line 2: trigger remaining. The watcher's one-shot out-of-combat read
@@ -191,18 +192,18 @@ function Overlay.UpdateDisplay()
       TXT_LIGHT .. "DR pred:|r " .. TXT_YELLOW .. "~%.1fs|r |cFF555555(model, %d empowers)|r",
       predRem, empowers))
   else
-    lines[2]:SetText(TXT_LIGHT .. "DR remain:|r |cFF888888--|r")
+    lines[2]:SetText(TXT_LIGHT .. "DR remain:|r " .. TXT_DIM .. "--|r")
   end
 
   -- Line 3: empowers cast + stacks reached so far + stacks projected at the
   -- predicted DR end + combat status
-  local combatTag = inCombat and "|cFFFF6644[COMBAT]|r" or "|cFF888888[idle]|r"
+  local combatTag = inCombat and "|cFFFF6644[COMBAT]|r" or TXT_DIM .. "[idle]|r"
   if state.castTime then
     lines[3]:SetText(string.format(
-      TXT_LIGHT .. "Empowers:|r " .. TXT_YELLOW .. "%d|r " .. TXT_LIGHT .. "· stacks|r " .. TXT_YELLOW .. "~%d|r |cFF888888(~%d at DR end)|r %s",
+      TXT_LIGHT .. "Empowers:|r " .. TXT_YELLOW .. "%d|r " .. TXT_LIGHT .. "· stacks|r " .. TXT_YELLOW .. "~%d|r " .. TXT_DIM .. "(~%d at DR end)|r %s",
       state.empowerCount or 0, state.stacksReached or 0, state.projectedStacksAtDrop or 0, combatTag))
   else
-    lines[3]:SetText(TXT_LIGHT .. "Empowers:|r |cFF888888--|r " .. combatTag)
+    lines[3]:SetText(TXT_LIGHT .. "Empowers:|r " .. TXT_DIM .. "--|r " .. combatTag)
   end
 
   -- Line 4: precise verifiable timer: exactly when the sound played
@@ -222,7 +223,7 @@ function Overlay.UpdateDisplay()
     lines[4]:SetText(string.format(
       TXT_LIGHT .. "Cycle:|r |cFFAAAAAA%.1fs since cast|r", elapsed))
   else
-    lines[4]:SetText(TXT_LIGHT .. "Cycle:|r |cFF888888--|r")
+    lines[4]:SetText(TXT_LIGHT .. "Cycle:|r " .. TXT_DIM .. "--|r")
   end
 
   -- Line 5: relative "ago" reading for context
@@ -232,10 +233,10 @@ function Overlay.UpdateDisplay()
       lines[5]:SetText(string.format(
         TXT_LIGHT .. "Last alert:|r " .. TXT_ORANGE .. "%.0fs ago|r", agoSec))
     else
-      lines[5]:SetText(TXT_LIGHT .. "Last alert:|r |cFF888888--|r")
+      lines[5]:SetText(TXT_LIGHT .. "Last alert:|r " .. TXT_DIM .. "--|r")
     end
   else
-    lines[5]:SetText(TXT_LIGHT .. "Last alert:|r |cFF888888--|r")
+    lines[5]:SetText(TXT_LIGHT .. "Last alert:|r " .. TXT_DIM .. "--|r")
   end
 
   -- Line 6: live verdict, a preview of FireAlert's gates in its order
@@ -244,9 +245,9 @@ function Overlay.UpdateDisplay()
   -- predicted end plus the grace, unless Animosity is known missing), as
   -- FireAlert's hold does; after that it is a trigger_too_short suppress.
   if alertsOff then
-    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r |cFF888888turn on Enable alerts in the settings|r")
+    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r " .. TXT_DIM .. "turn on Enable alerts in the settings|r")
   elseif not state.castTime then
-    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r |cFF888888idle|r")
+    lines[6]:SetText(TXT_LIGHT .. "Verdict:|r " .. TXT_DIM .. "idle|r")
   elseif state.alertFired and state.soundFailed then
     lines[6]:SetText(TXT_LIGHT .. "Verdict:|r " .. TXT_ORANGE .. "FIRED, but the sound didn't play|r")
   elseif state.alertFired then
@@ -262,7 +263,7 @@ function Overlay.UpdateDisplay()
     local lingerRem = state.estLingerRemaining
     if lingerRem ~= nil and lingerRem ~= math.huge and lingerRem <= 0 then
       lines[6]:SetText(
-        TXT_LIGHT .. "Verdict:|r |cFF888888expired: Rising Fury ended|r")
+        TXT_LIGHT .. "Verdict:|r " .. TXT_DIM .. "expired: Rising Fury ended|r")
     else
       local detail = (DEFER_REASON_DISPLAY[state.pendingDeferReason] or DEFER_FALLBACK).verdict
       lines[6]:SetText(string.format(
@@ -375,14 +376,7 @@ local function BuildFrame()
     lines[i] = line
   end
 
-  local accum = 0
-  f:SetScript("OnUpdate", function(_, elapsed)
-    accum = accum + elapsed
-    if accum >= 0.1 then
-      Overlay.UpdateDisplay()
-      accum = 0
-    end
-  end)
+  f:SetScript("OnUpdate", (U.Throttle(0.1, function() Overlay.UpdateDisplay() end)))
 
   frame = f
   Overlay.frame = f   -- exposed as a field for the development tools

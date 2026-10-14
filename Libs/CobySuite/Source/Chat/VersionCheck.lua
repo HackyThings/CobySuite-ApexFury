@@ -204,19 +204,18 @@ function Checker:Enabled(entry)
   return ok and on and true or false
 end
 
--- "Name-Realm", the form senders are compared in
+-- "Name-Realm", the form senders are compared in (U.CanonicalName); the
+-- realm is read only for a name without one
 function Checker:Canonical(name)
   if type(name) ~= "string" or self.seams.IsSecret(name) or name == "" then return nil end
   if name:find("-", 1, true) then return name end
-  local realm = self:Seam("Realm")
-  if type(realm) == "string" and realm ~= "" then return name .. "-" .. realm end
-  return name
+  return U.CanonicalName(name, self:Seam("Realm"))
 end
 
 function Checker:SelfName()
   local name, realm = self:Seam("Self")
   if type(name) ~= "string" or name == "" then return nil end
-  if type(realm) == "string" and realm ~= "" then return name .. "-" .. realm end
+  if type(realm) == "string" and realm ~= "" then return U.CanonicalName(name, realm) end
   return self:Canonical(name)
 end
 

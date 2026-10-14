@@ -215,6 +215,9 @@ end
 ---------------------------------------------------------------------------
 local SECTION_ICON = 16
 local TILE_H, TILE_GAP, TILE_ICON = 58, 8, 32
+-- the compact stat tile (UI.CreateStatTiles): icon sizes tried largest first, its edge padding and gaps,
+-- and valueLift, how far the count sits above its natural place under the name line
+local COMPACT = { icons = { 28, 24, 20, 18 }, pad = 6, gap = 4, rightPad = 3, vpad = 5, rowGap = 2, valueLift = 4 }
 local TILE_MIN_W = 100     -- a tile narrower than this wraps its grid to fewer columns
 local LIST_ROW_H, LIST_ICON = 24, 18
 local EMPTY_H = 58
@@ -325,6 +328,7 @@ end
 -- the mouse across the whole SCROLLBAR_ROOM gutter the controls leave free
 -- (a 6-pixel target was hard to grab: Task #239)
 local SCROLL_BAR_W = 6
+local SCROLL_FADE_H = 22   -- the shadow along a scrolling page's bottom edge
 
 local function AddScrollIndicator(scroll)
   local track = CreateFrame("Frame", nil, scroll)
@@ -354,13 +358,36 @@ local function AddScrollIndicator(scroll)
   thumbHover:SetAllPoints(thumbTex)
   thumbHover:SetColorTexture(light[1], light[2], light[3], 0.3)
 
+  -- A soft shadow along the bottom edge while there is more below, so a row that runs past the
+  -- edge reads as scrolling, not as cut text (the screens review, 2026-10-11)
+  local fadeFrame = CreateFrame("Frame", nil, scroll)
+  fadeFrame:SetHeight(SCROLL_FADE_H)
+  fadeFrame:SetPoint("BOTTOMLEFT", scroll, "BOTTOMLEFT", 0, 0)
+  fadeFrame:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", -SCROLLBAR_ROOM, 0)
+  -- above every row of the page, however deeply its frames nest (a level just over the scroll's may sit under
+  -- them, leaving the last line cut at full brightness: the screens review of Task #374)
+  fadeFrame:SetFrameLevel(scroll:GetFrameLevel() + 60)
+  fadeFrame:EnableMouse(false)
+  fadeFrame:Hide()
+  local fade = fadeFrame:CreateTexture(nil, "OVERLAY")
+  fade:SetAllPoints()
+  if fade.SetGradient and CreateColor then
+    -- a gradient only tints vertex colors: a texture with nothing set draws nothing (q374-02 showed no shadow)
+    fade:SetColorTexture(1, 1, 1, 1)
+    fade:SetGradient("VERTICAL", CreateColor(0, 0, 0, 0.75), CreateColor(0, 0, 0, 0))
+  else
+    fade:SetColorTexture(0, 0, 0, 0.3)
+  end
+
   local function Update()
     local range = scroll:GetVerticalScrollRange()
     if range <= 0 then
       track:Hide()
+      fadeFrame:Hide()
       return
     end
     track:Show()
+    fadeFrame:SetShown(scroll:GetVerticalScroll() < range - 1)
     local trackH = track:GetHeight()
     if trackH <= 0 then return end
     local ratio = scroll:GetHeight() / (scroll:GetHeight() + range)
@@ -794,7 +821,7 @@ function Panel:Layout()
       first = false
     end
   end
-  self.content:SetHeight(-y + PAD)
+  self.content:SetHeight(-y + PAD + 8)   -- the last row clears the edge, with room under its text
   if self.scroll and self.scroll.UpdateScrollIndicator then
     self.scroll.UpdateScrollIndicator()
   end
@@ -1815,6 +1842,7 @@ end
 -- its badge, and at least the grid's own tile height
 local function TileHeight(tile, minimum)
   local text = tile.Text:GetText()
+  if tile.compact then return math.max(minimum, 2 * COMPACT.vpad + (tile.blockH or 0)) end
   local need = 9 + math.ceil(tile.Title:GetStringHeight())
   if text and text ~= "" then need = need + 3 + math.ceil(tile.Text:GetStringHeight()) end
   if tile.Preview:IsShown() then need = need + 4 + (tile.Preview:GetHeight() or 0) + 8 end
@@ -2615,6 +2643,10 @@ end
 --     maxTiles = 8,          -- tiles made at build when tiles is a function (never later: a repaint may come in combat)
 --     columns = 3,           -- wanted; fewer when a tile would be narrower than minTileWidth
 --     minTileWidth = 100, height = 50,   -- each line is as tall as its tallest tile, at least height
+--     compact = false,       -- a short tile for many across, two lines: the icon with the label beside it
+--                               (the largest of the heading, body and small fonts that fits; the
+--                               icon shrinks before the font does), then the value centered under them; nothing wraps
+--                               or is cut, the sizes are measured at layout (about 58 tall)
 --     context = anything,    -- what every live field receives
 --     selected = key or function(context),  -- the tile drawn chosen (a gold tint and edge)
 --     onClick = function(key, context) end, -- tiles become buttons with a hover; the grid repaints after
@@ -2648,8 +2680,72 @@ local function StatTipFill(tip, tile, ctx)
   tip:SetText(text, 1, 1, 1, 1, true)
 end
 
-local function CreateStatTile(grid, height, clickable, ctx)
+-- The widest text one font gives over the shown tiles' fontstrings of one field
+local function WidestOf(tiles, shown, field, font)
+  local widest = 0
+  for i = 1, shown do
+    local fs = tiles[i][field]
+    fs:SetFontObject(font)
+    widest = math.max(widest, fs:GetUnboundedStringWidth())
+  end
+  return widest
+end
+
+-- The first font of the list in which every tile's text fits room, else the last (and false)
+local function FirstFit(tiles, shown, field, fonts, room)
+  for i, font in ipairs(fonts) do
+    if WidestOf(tiles, shown, field, font) <= room then return font, true end
+  end
+  return fonts[#fonts], false
+end
+
+local COMPACT_NAME_FONTS = { U.Fonts.HEADING, U.Fonts.BODY, U.Fonts.DATA }
+local COMPACT_VALUE_FONTS = { U.Fonts.TITLE, U.Fonts.HEADING, U.Fonts.BODY }
+
+-- Lays out the compact tiles of a tileWidth grid, measured: a name font and an
+-- icon size for which every name fits beside its icon (the larger font wins over
+-- the larger icon), the value in the largest font that fits across the tile,
+-- then each tile's icon, name and centered value placed about its middle
+local function CompactLayout(tiles, shown, tileWidth)
+  local C = COMPACT
+  for i = 1, shown do tiles[i].Text:SetText(tiles[i].labelFull or "") end
+  local nameFont, icon = COMPACT_NAME_FONTS[#COMPACT_NAME_FONTS], C.icons[#C.icons]
+  local placed
+  for _, font in ipairs(COMPACT_NAME_FONTS) do
+    for _, size in ipairs(C.icons) do
+      if not placed and WidestOf(tiles, shown, "Text", font) <= tileWidth - (C.pad + size + C.gap) - C.rightPad then
+        nameFont, icon, placed = font, size, true
+      end
+    end
+  end
+  local valueFont = FirstFit(tiles, shown, "Title", COMPACT_VALUE_FONTS, tileWidth - 2 * C.pad)
+  local textX = C.pad + icon + C.gap
+  for i = 1, shown do
+    local tile = tiles[i]
+    tile.Title:SetFontObject(valueFont)
+    tile.Text:SetFontObject(nameFont)
+    tile.Icon:SetSize(icon, icon)
+    local row = math.max(icon, math.ceil(tile.Text:GetStringHeight()))
+    local block = row + C.rowGap + math.ceil(tile.Title:GetStringHeight())
+    tile.blockH, tile.textX, tile.rightPad = block, textX, C.rightPad
+    tile.Icon:ClearAllPoints()
+    tile.Icon:SetPoint("TOPLEFT", tile, "LEFT", C.pad, block / 2 - (row - icon) / 2)
+    tile.Text:ClearAllPoints()
+    tile.Text:SetPoint("LEFT", tile.Icon, "RIGHT", C.gap, 0)
+    tile.Title:ClearAllPoints()
+    tile.Title:SetPoint("TOPLEFT", tile, "LEFT", C.pad, block / 2 - row - C.rowGap + C.valueLift)
+    tile.Title:SetPoint("RIGHT", tile, "RIGHT", -C.pad, 0)
+  end
+end
+
+local function CreateStatTile(grid, height, clickable, ctx, compact)
   local tile = CreateTile(grid, height, clickable and "stat" or "status")
+  if compact then
+    tile.compact = true
+    tile.Title:SetJustifyH("CENTER")
+    tile.Text:SetJustifyV("MIDDLE")
+    tile.Text:SetWordWrap(false)
+  end
   tile.Title:SetFontObject(U.Fonts.TITLE)
   if not tile.State then
     tile.State = tile:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
@@ -2684,7 +2780,7 @@ function UI.CreateStatTiles(parent, o)
   grid:SetHeight(height)
   grid.Tiles = {}
   for i = 1, count do
-    local tile = CreateStatTile(grid, height, o.onClick ~= nil, ctx)
+    local tile = CreateStatTile(grid, height, o.onClick ~= nil, ctx, o.compact)
     if o.onClick then
       tile:SetScript("OnClick", function(self)
         if self.stat and self.stat.key ~= nil then o.onClick(self.stat.key, ctx) end
@@ -2705,7 +2801,8 @@ function UI.CreateStatTiles(parent, o)
     -- the values in the large font when every one fits, else all in the body
     -- font: one tile alone in the small font read as two typefaces (Task #239)
     local titleFont = U.Fonts.TITLE
-    for i = 1, shown do
+    if o.compact then CompactLayout(self.Tiles, shown, tileWidth) end
+    for i = 1, o.compact and 0 or shown do
       local tile = self.Tiles[i]
       local titleRoom = tileWidth - (tile.textX or 12) - (tile.hasState and (28 + tile.State:GetStringWidth() + 6) or 10)
       tile.Title:SetFontObject(U.Fonts.TITLE)
@@ -2717,10 +2814,10 @@ function UI.CreateStatTiles(parent, o)
       for i = first, math.min(first + columns - 1, shown) do
         local tile = self.Tiles[i]
         tile:SetWidth(tileWidth)
-        local textRoom = tileWidth - (tile.textX or 12) - 10
+        local textRoom = tileWidth - (tile.textX or 12) - (tile.rightPad or 10)
         tile.Text:SetWidth(textRoom)
         -- the label's short form when the full one would wrap (Loot Sweeper's five tiles)
-        tile.Title:SetFontObject(titleFont)
+        if not tile.compact then tile.Title:SetFontObject(titleFont) end
         Color(tile.Title, tile.titleColor)
         tile.Text:SetText(tile.labelFull or "")
         if tile.labelShort and tile.Text:GetUnboundedStringWidth() > textRoom then tile.Text:SetText(tile.labelShort) end
@@ -3401,8 +3498,7 @@ function UI.CreateSettingsWindow(opts)
     name = opts.name .. "DefaultsPopup",
     icon = opts.icon,
     title = "Reset to defaults?",
-    width = 340,
-    height = 130,
+    width = 340,   -- the height follows the body
     parent = window,
     point = { "CENTER", window, "CENTER", 0, 0 },
     body = "Every setting in this window goes back to its default. Press Apply to keep them.",

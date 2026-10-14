@@ -1,7 +1,8 @@
 ---------------------------------------------------------------------------
 -- CobySuite Shared UI Factories: tooltips, buttons, toolbars, dropdowns,
 -- hover highlights, window state, checkbox menus, form widgets,
--- search boxes, copy fields, favorite stars, metric lists, secure clickers, docking
+-- search boxes, copy fields, favorite stars, metric lists, quality colors,
+-- empty-list labels, scroll list shells, secure clickers, docking
 ---------------------------------------------------------------------------
 local UI = CobySuite_ApexFury.UI
 local U = CobySuite_ApexFury.Utilities
@@ -324,8 +325,8 @@ function UI.PopulateBrandedTooltip(tooltip, opts)
     tooltip:AddLine(" ")
     for _, kb in ipairs(opts.keys) do
       tooltip:AddLine(
-        string.format("%s|cFF888888:|r %s",
-          U.WrapColor(U.Colors.TEXT_GOLD, kb.key or ""), kb.desc or ""),
+        string.format("%s%s %s",
+          U.WrapColor(U.Colors.TEXT_GOLD, kb.key or ""), U.WrapColor(U.Colors.TEXT_DIM, ":"), kb.desc or ""),
         w[1], w[2], w[3], true)
     end
   end
@@ -1555,6 +1556,123 @@ function UI.CreateMetricList(parent, metrics, opts)
     end
   end
   return list
+end
+
+---------------------------------------------------------------------------
+-- SetQualityColor(fontString, quality, fallback): the text in an item
+-- quality's color (CobySuite.Utilities.QualityColor, the same fallback);
+-- with fallback false and an unknown quality the color is left as it was.
+-- Returns true when it set a color.
+---------------------------------------------------------------------------
+function UI.SetQualityColor(fontString, quality, fallback)
+  local r, g, b = U.QualityColor(quality, fallback)
+  if not r then return false end
+  fontString:SetTextColor(r, g, b)
+  return true
+end
+
+---------------------------------------------------------------------------
+-- CreateEmptyLabel(parent, opts): the line said over an empty list ("No
+-- items match that search"), optionally under a dimmed picture. Returns a
+-- holder frame with .Text (and .Icon); label:SetText(text) shows it for a
+-- non-empty string and hides it for nil or "", label:GetText() reads it.
+-- The holder's height follows the text, so a "CENTER" point centers it.
+--
+--   opts.point     a SetPoint argument list for the holder
+--   opts.points    several, { { ... }, { ... } } (both sides, for one)
+--   opts.width     the text's width; nil: anchor both sides yourself
+--   opts.justify   default "CENTER"
+--   opts.font      default U.Fonts.BODY
+--   opts.color     { r, g, b }, default U.Colors.LABEL_GRAY
+--   opts.icon      a texture (file ID or path) over the text, desaturated
+--                  and dimmed; opts.iconSize default 56
+---------------------------------------------------------------------------
+local EmptyLabel = {}
+
+function EmptyLabel:SetText(text)
+  local shown = type(text) == "string" and text ~= ""
+  self.labelText = shown and text or nil
+  self.Text:SetText(self.labelText or "")
+  if shown then
+    local iconRoom = self.Icon and (self.iconSize + 12) or 0
+    self:SetHeight(math.max(1, iconRoom + (self.Text:GetStringHeight() or 0)))
+  end
+  self:SetShown(shown)
+end
+
+function EmptyLabel:GetText()
+  return self.labelText
+end
+
+function UI.CreateEmptyLabel(parent, opts)
+  opts = opts or {}
+  local f = CreateFrame("Frame", nil, parent)
+  Mixin(f, EmptyLabel)
+  if opts.width then f:SetWidth(opts.width) end
+  f:SetHeight(1)
+  ApplyPoint(f, opts.point)
+  for _, point in ipairs(opts.points or {}) do f:SetPoint(unpack(point)) end
+  local textTop = 0
+  if opts.icon then
+    f.iconSize = opts.iconSize or 56
+    f.Icon = f:CreateTexture(nil, "ARTWORK")
+    f.Icon:SetSize(f.iconSize, f.iconSize)
+    f.Icon:SetPoint("TOP", f, "TOP", 0, 0)
+    f.Icon:SetTexture(opts.icon)
+    f.Icon:SetDesaturated(true)
+    f.Icon:SetAlpha(0.45)
+    textTop = -(f.iconSize + 12)
+  end
+  f.Text = f:CreateFontString(nil, "OVERLAY", opts.font or U.Fonts.BODY)
+  f.Text:SetPoint("TOPLEFT", f, "TOPLEFT", 0, textTop)
+  f.Text:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, textTop)
+  f.Text:SetJustifyH(opts.justify or "CENTER")
+  f.Text:SetWordWrap(true)
+  local c = opts.color or U.Colors.LABEL_GRAY
+  f.Text:SetTextColor(c[1], c[2], c[3])
+  f:Hide()
+  return f
+end
+
+---------------------------------------------------------------------------
+-- CreateScrollList(parent, opts): the virtualized list shell every scrolled
+-- list builds the same way: a WowScrollBoxList, a MinimalScrollBar beside
+-- it and a linear view, joined by ScrollUtil. Returns { box, bar, view }.
+-- The caller anchors the box (the bar follows it at its right) and keeps
+-- the rows, the data provider, sorting and selection. Build it out of
+-- combat; the rows are made on first show, so show it out of combat too.
+--
+--   opts.initializeRow  required: initializeRow(row, data), passed to the
+--                       view as it is (no wrapper on a hot path)
+--   opts.rowType        the pooled row's frame type, default "Button"
+--   opts.rowHeight      default 20
+--   opts.scrollbarGap   pixels between the box and the bar, default 4;
+--                       false: the caller anchors the bar itself
+--   opts.clipChildren   default true: row text past the box is clipped
+--   opts.visibility     "always" (default) or "auto": the bar hides while
+--                       the rows fit (SetHideIfUnscrollable)
+--   opts.configureView  configureView(view), run before the scroll init
+--   opts.dataProvider   set on the box after the scroll init
+---------------------------------------------------------------------------
+function UI.CreateScrollList(parent, opts)
+  assert(opts and type(opts.initializeRow) == "function", "CreateScrollList: opts.initializeRow is required")
+  local box = CreateFrame("Frame", nil, parent, "WowScrollBoxList")
+  if opts.clipChildren ~= false then box:SetClipsChildren(true) end
+  local bar = CreateFrame("EventFrame", nil, parent, "MinimalScrollBar")
+  local gap = opts.scrollbarGap
+  if gap ~= false then
+    gap = gap or 4
+    bar:SetPoint("TOPLEFT", box, "TOPRIGHT", gap, 0)
+    bar:SetPoint("BOTTOMLEFT", box, "BOTTOMRIGHT", gap, 0)
+  end
+  if opts.visibility == "auto" then bar:SetHideIfUnscrollable(true) end
+  local view = CreateScrollBoxListLinearView()
+  view:SetElementExtent(opts.rowHeight or 20)
+  view:SetElementInitializer(opts.rowType or "Button", opts.initializeRow)
+  if opts.configureView then opts.configureView(view) end
+  ScrollUtil.InitScrollBoxListWithScrollBar(box, bar, view)
+  if opts.dataProvider then box:SetDataProvider(opts.dataProvider) end
+  return { box = box, bar = bar, view = view }
 end
 
 ---------------------------------------------------------------------------
